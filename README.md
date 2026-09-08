@@ -372,6 +372,10 @@ Client tests use Vitest, React Testing Library, and jsdom to exercise live inbox
 updates, reconnect recovery, overlapping requests, account cleanup, and task
 navigation with controlled API/socket responses.
 
+Board regression tests also cover drag/drop ordering and rollback, empty-list
+drops, workflow forms, filters, permission-gated header actions, and the GitHub
+repository panel.
+
 ---
 
 ## Project structure
@@ -379,8 +383,9 @@ navigation with controlled API/socket responses.
 ```text
 client/src/
   components/   board columns, cards, panels, modals
+    board/      project header/filters, workflow views, GitHub panel, page states
   context/      auth, theme, toast providers
-  hooks/        useSocket — the client's Socket.IO lifecycle
+  hooks/        socket lifecycle, live inbox, board drag-and-drop
   lib/          API client, board colours and icons, card metadata
   pages/        landing, auth, dashboard, board, activity, profile
 
@@ -407,6 +412,7 @@ server/src/
 | [API specification](docs/04-api-spec.md) | REST endpoints and the Socket.IO event contract |
 | [Sprint plan](docs/05-sprint-plan.md) | Process, backlog, milestones, definition of done |
 | [Realtime architecture](docs/06-realtime-architecture.md) | Socket implementation notes and maintenance guide |
+| [Board page maintenance](docs/board-page-maintenance.md) | Component ownership, drag invariants, regression checks, and future extraction boundaries |
 
 ---
 
