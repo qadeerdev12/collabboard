@@ -97,6 +97,14 @@ export const integrationApi = {
     request('/integrations/github/account', { method: 'DELETE', token }),
 }
 
+export const notificationApi = {
+  list: (token, { cursor, limit = 20 } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    return request(`/notifications?${params}`, { token });
+  },
+}
+
 export const taskApi = {
   mine: (token) => request('/tasks/mine', { token }),
 }

@@ -5,8 +5,9 @@ Step 3A registers an internal assignment subscriber during server startup.
 Step 3B connects card creation and assignment changes to it through the shared
 mutation service. Assignments now persist notifications. Step 4A exposes a
 inbox read API. Step 4B adds marking one owned notification as read, and step 4C
-adds marking all visible unread notifications as read. Socket.IO notification
-delivery and frontend inbox controls are still pending.
+adds marking all visible unread notifications as read. Step 5A adds the frontend
+bell and read-only inbox. Item navigation, read actions, and Socket.IO notification
+delivery are still pending.
 
 ## Reading the model
 
@@ -534,3 +535,59 @@ npm test -- src/__tests__/notificationInbox.test.js
 The notification API now supports listing, marking one as read, and marking all
 visible unread items as read. Stop for review and commit here. Step 5 will add
 the frontend bell, unread badge, and inbox dropdown using these endpoints.
+
+## Step 5A: read-only frontend inbox
+
+The shared `AppHeader` now includes `NotificationBell` on Projects, My Tasks,
+Activity, and Profile pages. The project board's custom header is not changed in
+this slice. Notification rows are deliberately read-only: opening the dropdown
+does not mark records read, and rows do not navigate yet. Those actions are 5B.
+
+### Follow the frontend code
+
+1. `notificationApi.list()` in `client/src/lib/api.js` builds query parameters
+   with `URLSearchParams` and uses the existing authenticated request wrapper.
+2. `useNotificationInbox()` fetches page one on mount for the unread badge. Its
+   `refresh()` replaces the list and refreshes the count when the bell opens or
+   the user presses Refresh. There is no polling or Socket.IO subscription yet.
+3. `loadMore()` sends `nextCursor`, appends new records without duplicate IDs,
+   and adopts the count and next cursor from the response. A ref prevents two
+   rapid clicks from requesting the same page concurrently.
+4. Request generations distinguish old and new refreshes. A stale page response
+   cannot overwrite a newer refresh; unmount invalidates pending responses.
+5. `NotificationBell` displays the results. It remounts when the token or pathname
+   changes, clearing private cached data and closing the previous page's dropdown.
+
+### UI states and accessibility
+
+- Positive unread counts appear on the bell, capped visually at `99+`. Its
+  accessible label includes the exact count. Unknown/failed counts show no badge.
+- Loading uses skeleton rows. Empty results show an empty inbox message.
+- A failed first-page refresh hides stale rows and provides Retry. A failed
+  next page retains already-loaded rows and provides Retry loading more.
+- Read and unread rows have different styling and screen-reader labels.
+- Missing actors use "Former member"; missing tasks use "Task no longer available".
+- The panel has a labelled region, receives focus when opened, and returns focus
+  to the bell on Escape or Close. Outside mouse clicks dismiss it. It is a
+  nonmodal region, not an ARIA menu requiring menu-item keyboard behavior.
+- The mobile panel fits the viewport; desktop anchors it under the bell. Its
+  list scrolls within a bounded height, and titles wrap rather than overflow.
+- Opening notifications closes the shared header's user menu.
+
+The icons use `lucide-react`, the only added dependency. No backend routes changed.
+The badge reflects the last completed fetch; it is not live until step 6.
+Access is rechecked by the API on refresh, but visible rows are not continuously
+monitored for membership changes while the panel remains open.
+
+### Review and verification
+
+Start with the API helper, then the hook, then the component, and finally its
+`AppHeader` integration. Browser checks used isolated sample responses (no writes
+to real notifications) to verify desktop/mobile layout, long text, missing
+references, pagination, loading, empty/error states, retained rows on page failure,
+the badge cap, and Escape focus restoration. Temporary preview files were removed.
+
+Run `npm run lint` and `npm run build` from `client`. In the app, assign a task
+to another account, then open that account's bell on a shared-header page to
+verify the real notification appears. Opening it should leave unreadCount unchanged.
+Pause for review and commit before 5B: navigation and mark-as-read controls.

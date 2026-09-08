@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { useTheme } from '../context/useTheme'
 import Logo from './Logo'
+import NotificationBell from './NotificationBell'
 
 function initials(name) {
   if (!name) return '?'
@@ -74,6 +75,7 @@ export default function AppHeader() {
         </div>
 
         <div className="flex items-center gap-2">
+          <NotificationBell onOpen={() => setOpen(false)} />
           <button
             onClick={toggle}
             aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
