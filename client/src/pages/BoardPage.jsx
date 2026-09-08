@@ -22,6 +22,7 @@ import { useSocket } from '../hooks/useSocket'
 import { positionBetween, positionForIndex } from '../lib/position'
 import { CARD_STATUSES, CARD_TAGS } from '../lib/cardMeta'
 import Logo from '../components/Logo'
+import NotificationBell from '../components/NotificationBell'
 import BoardSwitcher from '../components/BoardSwitcher'
 import BoardColumn from '../components/BoardColumn'
 import CardDetailModal from '../components/CardDetailModal'
@@ -2366,22 +2367,25 @@ export default function BoardPage() {
                 )}
               </div>
             )}
-            <button
-              onClick={toggle}
-              aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
-              className="col-span-2 grid h-10 w-full place-items-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 sm:col-span-1 sm:w-10"
-            >
-              {dark ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="4" />
-                  <path d="M12 2v2M12 20v2M4 12H2M22 12h-2M19.07 4.93l-1.41 1.41M6.34 17.66l-1.41 1.41M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41" />
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
-                </svg>
-              )}
-            </button>
+            <div className="col-span-2 flex items-center justify-end gap-2 sm:col-span-1">
+              <NotificationBell />
+              <button
+                onClick={toggle}
+                aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
+                className="grid h-10 w-10 place-items-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                {dark ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2v2M12 20v2M4 12H2M22 12h-2M19.07 4.93l-1.41 1.41M6.34 17.66l-1.41 1.41M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41" />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </header>

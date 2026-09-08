@@ -7,8 +7,10 @@ mutation service. Assignments now persist notifications. Step 4A exposes a
 inbox read API. Step 4B adds marking one owned notification as read, and step 4C
 adds marking all visible unread notifications as read. Step 5A adds the frontend
 bell and inbox. Step 5B adds item navigation and read actions. Step 6A adds private
-Socket.IO inbox-change signals on the server. The frontend does not consume those
-signals yet; live refresh and reconnect handling belong to step 6B.
+Socket.IO inbox-change signals on the server. Step 6B consumes those signals in
+the frontend, including reconnect recovery and the project-header bell. The live
+task-assignment inbox is implemented; comment and membership publishers remain
+future work. Earlier sections describe their individual review checkpoints.
 
 ## Reading the model
 
@@ -758,3 +760,99 @@ npm test
 
 Stop for review and commit here. Step 6B connects the frontend bell to this signal;
 comment and membership publishers remain separate future iterations.
+
+## Step 6B: live frontend inbox
+
+The bell now updates without opening or refreshing it. It appears in the shared
+application header and the project header. Live updates are quiet: no connection
+toast, browser notification, or extra toast covering the UI is introduced.
+
+```text
+Socket connects/reconnects OR receives notifications:changed
+  -> scheduleRefresh() remembers that the inbox may have changed
+  -> coalesce nearby signals for 100 ms
+  -> GET /api/v1/notifications with this account's JWT
+  -> replace page one, unread count, and pagination cursor from the response
+```
+
+### Follow the frontend code
+
+1. `useNotificationInbox(token)` calls the existing `useSocket(token)` hook. The
+   inbox connection lives while the keyed bell is mounted, even when its popover
+   is closed. It disconnects on logout, page/account changes, and unmount.
+2. The inbox effect attaches `notifications:changed` and `connect` listeners before
+   starting its initial REST fetch. Socket.IO fires `connect` again on reconnect;
+   that fetch recovers persisted notifications missed while offline. REST still
+   loads on mount even if Socket.IO is unavailable.
+3. `scheduleRefresh()` sets `dirty` and starts at most one 100 ms timer. Signals
+   carry no records or counts, so they never directly increment the badge.
+4. `refresh()` fetches a fresh first page. Initial/manual loads use skeletons;
+   background loads retain current rows and gently spin the refresh icon, respecting
+   reduced-motion settings. Read and paging controls are disabled during refresh.
+5. `NotificationBell` stays mounted while closed and stays open during background
+   updates. Its account/page key discards cached private React state on navigation
+   or account changes. `BoardPage` now also renders this same component.
+
+### Why the effect owns a request session
+
+The effect's local variables coordinate requests for one token and lifecycle:
+
+| Variable | Purpose |
+| --- | --- |
+| `active` | Ignore responses and action completion after cleanup |
+| `generation` | Prevent an older pagination request from appending after refresh/write |
+| `fetching`, `writing`, `paging` | Block duplicate or conflicting operations |
+| `dirty` | Remember a signal or refresh requested during an existing fetch/write |
+| `refreshTimer` | Coalesce bursts without issuing parallel full-inbox requests |
+| `cursor` | Keep pagination requests tied to the latest accepted snapshot |
+
+The returned React callbacks delegate through `session.current` to that active
+effect. Cleanup cancels timers, removes listeners, and ignores outstanding HTTP
+responses. It does not cancel already-sent requests or undo server-side writes.
+
+A signal arriving during a GET queues another fetch after the current one. A
+signal arriving during a successful read PATCH is consumed by the normal post-write
+GET. Signals arriving during that GET queue another pass. This handles the signal
+sent back to the tab that initiated the read without losing a newer assignment.
+
+Failed writes retain their inline action error, even if a queued background fetch
+succeeds, and do not navigate. A failed background GET clears cached rows, count,
+and cursor rather than displaying potentially inaccessible data. Manual Retry or
+the next live/connect signal can recover. A failed post-write GET does not undo a
+successful PATCH; that existing navigation behavior is preserved.
+
+Fresh snapshots reset any loaded history to page one. Keeping a deep paginated
+view in place while merging concurrent arrivals would require a separate paging
+contract; this implementation prioritizes server-authoritative state.
+
+### Connection scope
+
+The inbox owns a separate authenticated connection and does not send `board:join`.
+The project page keeps its existing board/chat connection unchanged. A project
+viewer therefore has two connections, but only the board connection contributes
+to project presence. A future app-wide socket provider could consolidate these
+lifecycles; it is not required for private inbox correctness.
+
+### Tests and manual review
+
+The client now has Vitest, React Testing Library, and jsdom. Run `npm test` from
+`client` for request-race and bell tests in `notificationInbox.test.jsx`. Socket
+delivery and API calls are controlled in those tests so burst, pending-fetch,
+pending-write, failed-write, stale-pagination, Strict Mode, account-change, logout,
+and navigation cases can be exercised deterministically.
+
+Browser verification additionally used the real app and backend against an
+isolated temporary MongoDB with two accounts and multiple tabs. It checked live
+assignments, actor isolation, cross-tab reads, reconnect recovery, task navigation,
+and project-header/inbox layout at desktop and mobile widths. No development data
+was modified; the temporary browser harness and servers were removed/stopped.
+
+For a user review, keep the recipient's dashboard open in two tabs. Assign that
+account a task from another account, confirm both badges change without opening
+the inbox, then mark it read in one tab and confirm the other updates. Disconnect
+and reconnect the recipient and confirm missed assignments appear.
+
+Run `npm test`, `npm run lint`, and `npm run build` from `client`, plus `npm test`
+from `server`. This completes the live assignment-notification path. Adding
+comment/member event publishers, notification preferences, email, or push delivery
+are separate feature slices, not implied by this completion.

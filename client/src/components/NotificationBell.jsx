@@ -31,7 +31,7 @@ function InboxBell({ token, onOpen }) {
   const panel = useRef(null)
   const id = useId()
   const inbox = useNotificationInbox(token)
-  const busy = inbox.loading || Boolean(inbox.pendingRead)
+  const busy = inbox.loading || inbox.refreshing || Boolean(inbox.pendingRead)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -88,7 +88,7 @@ function InboxBell({ token, onOpen }) {
           <div className="flex shrink-0 items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
             <h2 className="min-w-0 flex-1 text-sm font-semibold">Notifications</h2>
             <span className="text-xs text-zinc-500 dark:text-zinc-400">{inbox.unreadCount === null ? '' : `${inbox.unreadCount} unread`}</span>
-            <button type="button" title="Refresh notifications" aria-label="Refresh notifications" disabled={busy} onClick={inbox.refresh} className={iconButton}><RefreshCw size={15} aria-hidden="true" /></button>
+            <button type="button" title="Refresh notifications" aria-label="Refresh notifications" disabled={busy} onClick={inbox.refresh} className={iconButton}><RefreshCw size={15} aria-hidden="true" className={inbox.refreshing ? 'motion-safe:animate-spin' : undefined} /></button>
             <button type="button" title="Close notifications" aria-label="Close notifications" onClick={() => { setOpen(false); trigger.current?.focus() }} className={iconButton}><X size={17} aria-hidden="true" /></button>
           </div>
           <div className="flex shrink-0 justify-end border-b border-zinc-100 px-4 py-2 dark:border-zinc-800">

@@ -358,8 +358,9 @@ access. Signals are best-effort, not replayed, and have no acknowledgement.
 Transport failure does not fail an already-persisted notification or read action.
 Clients must also fetch on connect/reconnect to recover missed changes.
 
-The backend contract is implemented in step 6A; the frontend listener and reconnect
-refresh are deferred to step 6B. See [the notifications walkthrough](notifications.md#step-6a-private-server-side-live-delivery).
+The backend contract and frontend listener/reconnect refresh are implemented in
+steps 6A and 6B. The bell coalesces signals and refreshes server-authoritative inbox
+state, including read changes from other tabs. See [the notifications walkthrough](notifications.md#step-6b-live-frontend-inbox).
 
 ---
 

@@ -229,6 +229,16 @@ project member is writing. People can delete their own messages, and owners can
 clear a project's chat when a conversation needs a reset. If a send fails, the
 message stays in the thread with a retry action instead of disappearing.
 
+### Private task notifications
+
+Assigning a task to a teammate creates a personal inbox notification. The bell in
+the application and project headers updates live, even while closed. Users can
+mark one or all notifications read and open the associated task directly; read
+changes sync across their tabs. Reconnecting refreshes persisted inbox state, and
+the API checks current project access before returning notification details.
+Self-assignments do not notify. Comment and membership notifications are not yet
+published. See the [notification architecture and walkthrough](docs/notifications.md).
+
 ### Search, filters, and a dark mode that isn't an afterthought
 
 Projects filter by name and sort by recent activity, creation date, or name. Cards
@@ -333,14 +343,15 @@ members panel, and drag a card — that is the whole feature in one gesture.
 cd server && npm test
 ```
 
-Thirty-five integration tests run against an in-memory MongoDB and a real
-Socket.IO server — no mocks standing in for the parts most likely to be wrong.
-They cover the permission matrix above, the handshake rejecting invalid JWTs,
+The backend suite combines focused model/service tests with integration tests
+against an isolated MongoDB and a real Socket.IO server. It covers the permission
+matrix above, the handshake rejecting invalid JWTs,
 membership being checked before a room join, broadcasts reaching collaborators
 while acking the sender, assignee validation, workflow template creation,
-comment/chat scoping, and account deletion.
+comment/chat scoping, account deletion, notification persistence and ownership,
+private inbox delivery, and multi-tab read synchronization.
 
-Nine of them cover the GitHub integration specifically: endpoints refusing to
+GitHub integration tests cover endpoints refusing to
 answer before an account is connected, tokens surviving a round trip through
 encryption while staying usable for API calls, disconnect revoking the token and
 removing linked project repos, rate limits returning a clear response, dashboard
@@ -351,8 +362,15 @@ activity without duplicates, older connections being asked to reconnect for the
 Client checks:
 
 ```bash
-cd client && npm run lint && npm run build
+cd client
+npm test
+npm run lint
+npm run build
 ```
+
+Client tests use Vitest, React Testing Library, and jsdom to exercise live inbox
+updates, reconnect recovery, overlapping requests, account cleanup, and task
+navigation with controlled API/socket responses.
 
 ---
 
