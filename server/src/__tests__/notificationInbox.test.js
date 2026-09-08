@@ -45,6 +45,90 @@ async function fixture() {
   };
 }
 
+describe('mark one notification as read', () => {
+  function mark(ctx, id, body = {}) {
+    return request(app).patch(`/api/v1/notifications/${id}/read`)
+      .set('Authorization', `Bearer ${ctx.token}`).send(body);
+  }
+
+  it('saves a server timestamp, decreases unread count, and leaves other notifications untouched', async () => {
+    const ctx = await fixture();
+    const notification = await ctx.add();
+    const other = await ctx.add();
+    const before = Date.now();
+    const res = await mark(ctx, notification.id, { readAt: '2000-01-01', recipientId: ctx.actor.id }).expect(200);
+    expect(Object.keys(res.body.data.notification).sort()).toEqual(['_id', 'readAt']);
+    expect(res.body.data.notification._id).toBe(notification.id);
+    expect(new Date(res.body.data.notification.readAt).getTime()).toBeGreaterThanOrEqual(before);
+    expect(res.headers['cache-control']).toBe('no-store');
+    const saved = await Notification.findById(notification._id);
+    expect(saved.readAt.toISOString()).toBe(res.body.data.notification.readAt);
+    expect(saved.recipient.toString()).toBe(ctx.recipient.id);
+    expect((await Notification.findById(other._id)).readAt).toBeNull();
+    expect((await ctx.get().expect(200)).body.data.unreadCount).toBe(1);
+  });
+
+  it('preserves readAt and updatedAt on repeated calls', async () => {
+    const ctx = await fixture();
+    const notification = await ctx.add({ readAt: new Date('2026-01-01T00:00:00.000Z') });
+    const first = await mark(ctx, notification.id).expect(200);
+    const second = await mark(ctx, notification.id, { readAt: null }).expect(200);
+    expect(second.body).toEqual(first.body);
+    const saved = await Notification.findById(notification._id);
+    expect(saved.readAt).toEqual(notification.readAt);
+    expect(saved.updatedAt).toEqual(notification.updatedAt);
+  });
+
+  it('returns the same persisted read time for concurrent requests', async () => {
+    const ctx = await fixture();
+    const notification = await ctx.add();
+    const responses = await Promise.all([mark(ctx, notification.id), mark(ctx, notification.id)]);
+    expect(responses.map((res) => res.status)).toEqual([200, 200]);
+    expect(responses[0].body).toEqual(responses[1].body);
+    expect((await Notification.findById(notification._id)).readAt.toISOString()).toBe(responses[0].body.data.notification.readAt);
+  });
+
+  it('requires authentication and hides another recipient\'s notification with the same 404 as a missing ID', async () => {
+    const ctx = await fixture();
+    const other = await ctx.add({ recipient: ctx.actor._id });
+    await request(app).patch(`/api/v1/notifications/${other.id}/read`).expect(401);
+    const forbidden = await mark(ctx, other.id).expect(404);
+    const missing = await mark(ctx, new mongoose.Types.ObjectId().toString()).expect(404);
+    expect(forbidden.body).toEqual(missing.body);
+    expect((await Notification.findById(other._id)).readAt).toBeNull();
+    const malformed = await mark(ctx, 'invalid-id').expect(400);
+    expect(malformed.body.error.code).toBe('VALIDATION');
+  });
+
+  it.each(['removed membership', 'deleted project'])('rejects notifications hidden by %s', async (reason) => {
+    const ctx = await fixture();
+    const notification = await ctx.add();
+    if (reason === 'deleted project') await Board.deleteOne({ _id: ctx.board._id });
+    else await Board.updateOne({ _id: ctx.board._id }, { $pull: { members: { user: ctx.recipient._id } } });
+    await mark(ctx, notification.id).expect(404);
+    expect((await Notification.findById(notification._id)).readAt).toBeNull();
+  });
+
+  it('can mark retained history read after a task or actor is deleted', async () => {
+    const ctx = await fixture();
+    const notification = await ctx.add();
+    await Card.deleteOne({ _id: ctx.card._id });
+    await User.deleteOne({ _id: ctx.actor._id });
+    await mark(ctx, notification.id).expect(200);
+    expect((await ctx.get().expect(200)).body.data.unreadCount).toBe(0);
+  });
+
+  it('returns a generic error and leaves read state unchanged when the write fails', async () => {
+    const ctx = await fixture();
+    const notification = await ctx.add();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(Notification, 'findOneAndUpdate').mockImplementationOnce(() => { throw new Error('Private database details'); });
+    const res = await mark(ctx, notification.id).expect(500);
+    expect(res.body.error).toEqual({ code: 'SERVER', message: 'Could not mark notification as read.' });
+    expect((await Notification.findById(notification._id)).readAt).toBeNull();
+  });
+});
+
 describe('notification read API', () => {
   it('requires authentication and returns an empty inbox without creating or marking records', async () => {
     const ctx = await fixture();

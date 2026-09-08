@@ -4,8 +4,8 @@ Steps 1 and 2 define the notification schema and an internal creation service.
 Step 3A registers an internal assignment subscriber during server startup.
 Step 3B connects card creation and assignment changes to it through the shared
 mutation service. Assignments now persist notifications. Step 4A exposes a
-read-only inbox API. Mark-as-read routes, Socket.IO notification delivery, and
-frontend inbox controls are still pending.
+inbox read API. Step 4B adds marking one owned notification as read. Mark-all-read,
+Socket.IO notification delivery, and frontend inbox controls are still pending.
 
 ## Reading the model
 
@@ -399,3 +399,73 @@ Run `npm test -- src/__tests__/notificationInbox.test.js` from `server` for this
 slice, or `npm test` for the full server suite. No frontend changes are included.
 Stop for review here. Step 4B will mark one owned notification as read; step 4C
 will handle marking all as read.
+
+## Step 4B: mark one notification as read
+
+```http
+PATCH /api/v1/notifications/:notificationId/read
+Authorization: Bearer <your existing session token>
+```
+
+No request body is needed. The server sets the timestamp, and ownership always
+comes from authentication. Supplying `recipientId` or `readAt` in the body does
+not override those values. A successful response contains only the update needed
+by the future frontend:
+
+```json
+{
+  "data": {
+    "notification": {
+      "_id": "<notification id>",
+      "readAt": "2026-09-08T12:00:00.000Z"
+    }
+  }
+}
+```
+
+### Code walkthrough
+
+1. `notificationRoutes.js` applies `protect` and calls `readNotification()`.
+2. The controller passes the authenticated user ID and route notification ID
+   to `markNotificationRead()` in `notificationInboxService.js`.
+3. The service validates the ID, then finds a notification using **both** its ID
+   and recipient. It checks current project membership with `getBoardIfMember()`.
+4. `findOneAndUpdate()` matches that same owner and notification with
+   `readAt: null`. Only an unread notification can receive a new timestamp.
+5. If no unread document matched, the service reads the existing timestamp and
+   returns it without writing again. If the record has disappeared, it returns 404.
+
+This is an idempotent operation: repeating a successful request preserves both
+`readAt` and `updatedAt`. The atomic unread filter also handles simultaneous calls
+from two tabs; only the first successful update writes the timestamp.
+
+### Access and response behavior
+
+- No authentication: 401. Malformed notification ID: 400.
+- Missing notification, another recipient's notification, deleted project, or
+  removed membership: the same generic 404 response, with no read-state change.
+- Deleted actor/task: still markable when the notification's project is accessible,
+  matching the retained-history policy of the GET endpoint.
+- Database failure: generic 500 response, with details logged only on the server.
+- GET never marks records read. A later GET reflects the updated unread count.
+- The response omits an unread count; the future client can apply this item update
+  and refresh the inbox count rather than relying on a second count query here.
+
+Project membership is checked before the write, not in a cross-collection
+transaction. A concurrent removal can race this check; the only resulting write
+is to the user's own read state, and no project/task content is returned. Inbox
+reads continue to apply current project access independently.
+
+### Tests and checkpoint
+
+The mark-one cases in `notificationInbox.test.js` exercise persistence, reduced
+unread counts, untouched neighboring records, ignored client-supplied values,
+repeat calls, concurrent calls, authentication/ownership, unavailable projects,
+retained history, and failed writes. Run from `server`:
+
+```sh
+npm test -- src/__tests__/notificationInbox.test.js
+```
+
+Stop for code review here. The next slice is step 4C, marking all visible unread
+notifications as read. There are still no frontend changes.

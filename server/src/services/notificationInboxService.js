@@ -3,6 +3,7 @@ import Notification from '../models/Notification.js';
 import Board from '../models/Board.js';
 import Card from '../models/Card.js';
 import User from '../models/User.js';
+import { getBoardIfMember } from '../utils/boardAccess.js';
 
 function invalidQuery(message) {
   const error = new Error(message);
@@ -96,4 +97,36 @@ export async function listNotifications({ recipientId, limit: requestedLimit, cu
     createdAt: last.createdAt.toISOString(), id: last._id.toString(),
   })).toString('base64url') : null;
   return { notifications, unreadCount: result.unread[0]?.count || 0, nextCursor };
+}
+
+function notificationNotFound() {
+  const error = new Error('Notification not found.');
+  error.statusCode = 404;
+  error.code = 'NOT_FOUND';
+  throw error;
+}
+
+export async function markNotificationRead({ recipientId, notificationId }) {
+  if (typeof notificationId !== 'string' || !/^[a-f\d]{24}$/i.test(notificationId)) {
+    invalidQuery('Invalid notification id.');
+  }
+  // Ownership is part of every query, not just a check after fetching by ID.
+  const filter = { _id: notificationId, recipient: recipientId };
+  const candidate = await Notification.findOne(filter).select('board').lean();
+  if (!candidate || !await getBoardIfMember(candidate.board, recipientId)) notificationNotFound();
+
+  // Compare-and-set: only an unread document can receive a timestamp. Competing
+  // requests cannot replace the first successful readAt, or update it on retry.
+  const updated = await Notification.findOneAndUpdate(
+    { ...filter, readAt: null },
+    { $set: { readAt: new Date() } },
+    { returnDocument: 'after', runValidators: true }
+  ).select('_id readAt').lean();
+  if (updated) return updated;
+
+  // Another request may have marked it read, or it was already read. Return the
+  // saved timestamp without another write; a concurrently deleted record is 404.
+  const existing = await Notification.findOne(filter).select('_id readAt').lean();
+  if (!existing) notificationNotFound();
+  return existing;
 }
