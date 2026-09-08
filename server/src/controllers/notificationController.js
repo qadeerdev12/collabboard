@@ -1,4 +1,4 @@
-import { listNotifications, markNotificationRead } from '../services/notificationInboxService.js';
+import { listNotifications, markNotificationRead, markAllNotificationsRead } from '../services/notificationInboxService.js';
 
 export async function getNotifications(req, res) {
   try {
@@ -35,6 +35,19 @@ export async function readNotification(req, res) {
     return res.status(status).json({ error: {
       code: err.code || 'SERVER',
       message: status === 500 ? 'Could not mark notification as read.' : err.message,
+    } });
+  }
+}
+
+export async function readAllNotifications(req, res) {
+  try {
+    const data = await markAllNotificationsRead({ recipientId: req.user._id });
+    res.set('Cache-Control', 'no-store');
+    return res.json({ data });
+  } catch (err) {
+    console.error('Mark all notifications read error:', err.message);
+    return res.status(500).json({ error: {
+      code: 'SERVER', message: 'Could not mark notifications as read.',
     } });
   }
 }

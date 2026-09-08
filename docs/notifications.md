@@ -4,8 +4,9 @@ Steps 1 and 2 define the notification schema and an internal creation service.
 Step 3A registers an internal assignment subscriber during server startup.
 Step 3B connects card creation and assignment changes to it through the shared
 mutation service. Assignments now persist notifications. Step 4A exposes a
-inbox read API. Step 4B adds marking one owned notification as read. Mark-all-read,
-Socket.IO notification delivery, and frontend inbox controls are still pending.
+inbox read API. Step 4B adds marking one owned notification as read, and step 4C
+adds marking all visible unread notifications as read. Socket.IO notification
+delivery and frontend inbox controls are still pending.
 
 ## Reading the model
 
@@ -469,3 +470,67 @@ npm test -- src/__tests__/notificationInbox.test.js
 
 Stop for code review here. The next slice is step 4C, marking all visible unread
 notifications as read. There are still no frontend changes.
+
+## Step 4C: mark all visible notifications as read
+
+```http
+PATCH /api/v1/notifications/read-all
+Authorization: Bearer <your existing session token>
+```
+
+No body is needed. This updates the signed-in user's unread notifications across
+all currently accessible projects, not just the current inbox page. The response
+is `{ "data": { "modifiedCount": 3 } }`, where the count is the number of records
+actually changed. Empty inboxes and repeats with no new unread items return zero.
+Clients cannot override the recipient or timestamp through request parameters.
+
+### Code walkthrough
+
+1. The route authenticates the request, then `readAllNotifications()` forwards
+   `req.user._id` to `markAllNotificationsRead()`.
+2. The service selects IDs of projects where the recipient is currently a member.
+3. It selects notification IDs matching that recipient, those projects, and
+   `readAt: null`. These captured IDs define the operation's scope.
+4. `updateMany()` uses the same filters plus those exact notification IDs, and
+   sets a server-generated read timestamp. The unread filter prevents replacing
+   a timestamp already written by a concurrent single-item or bulk read.
+5. The controller returns `modifiedCount` with `Cache-Control: no-store`.
+
+### Concurrency and access
+
+Capturing IDs avoids marking a notification that arrives after selection as read.
+Items arriving earlier, while the request is selecting candidates, may be included.
+This is a database selection boundary, not the moment the user clicked a button.
+The future frontend should refresh the inbox and unread count after success;
+it must not assume the unread count became zero.
+
+Already-read records preserve both `readAt` and `updatedAt`. Other recipients,
+deleted projects, and projects with revoked membership at the access check are
+excluded. Retained history with a deleted actor/task remains markable, matching
+the inbox's visibility rules.
+
+As with marking one item, project membership can change between its check and
+the write. This is not a cross-collection transaction. Each document update is
+atomic, but the whole bulk operation is not: a database failure can leave some
+records updated. Retrying preserves successful timestamps and can finish the
+remaining unread items; it can also include newly arrived items in that new call.
+The endpoint returns a generic 500 for failures and logs the error server-side.
+
+This first version captures IDs in memory and sends them with `$in`; it is
+appropriate for the app's current scale. Large inbox histories will need bounded
+batching or a revised bulk-read strategy to avoid oversized queries.
+
+### Tests and checkpoint
+
+The bulk cases in `notificationInbox.test.js` verify cross-project updates beyond
+the default page size, ownership, inaccessible projects, unchanged read timestamps,
+repeat/empty calls, deleted references, arrivals after selection, competing reads,
+and failed writes. Run from `server`:
+
+```sh
+npm test -- src/__tests__/notificationInbox.test.js
+```
+
+The notification API now supports listing, marking one as read, and marking all
+visible unread items as read. Stop for review and commit here. Step 5 will add
+the frontend bell, unread badge, and inbox dropdown using these endpoints.

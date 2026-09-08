@@ -45,6 +45,99 @@ async function fixture() {
   };
 }
 
+describe('mark all notifications as read', () => {
+  const markAll = (ctx, body = {}) => request(app).patch('/api/v1/notifications/read-all')
+    .set('Authorization', `Bearer ${ctx.token}`).send(body);
+
+  it('marks all accessible unread records across projects, including records beyond the inbox page', async () => {
+    const ctx = await fixture();
+    const second = await Board.create({ name: 'Second project', owner: ctx.recipient._id, members: [{ user: ctx.recipient._id, role: 'owner' }] });
+    await Promise.all(Array.from({ length: 22 }, () => ctx.add()));
+    await ctx.add({ board: second._id, type: 'member.added', card: null });
+    const alreadyRead = await ctx.add({ readAt: new Date('2026-01-01') });
+    const other = await ctx.add({ recipient: ctx.actor._id });
+    const inaccessible = await ctx.add({ board: new mongoose.Types.ObjectId() });
+    const res = await markAll(ctx, { recipientId: ctx.actor.id, readAt: '2000-01-01' }).expect(200);
+    expect(res.body.data).toEqual({ modifiedCount: 23 });
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect((await ctx.get().expect(200)).body.data.unreadCount).toBe(0);
+    const unchanged = await Notification.findById(alreadyRead._id);
+    expect(unchanged.readAt).toEqual(alreadyRead.readAt);
+    expect(unchanged.updatedAt).toEqual(alreadyRead.updatedAt);
+    expect((await Notification.findById(other._id)).readAt).toBeNull();
+    expect((await Notification.findById(inaccessible._id)).readAt).toBeNull();
+  });
+
+  it('returns zero for empty inboxes and repeated calls without changing timestamps', async () => {
+    const ctx = await fixture();
+    expect((await markAll(ctx).expect(200)).body.data.modifiedCount).toBe(0);
+    const item = await ctx.add();
+    await markAll(ctx).expect(200);
+    const first = await Notification.findById(item._id);
+    expect((await markAll(ctx).expect(200)).body.data.modifiedCount).toBe(0);
+    const repeated = await Notification.findById(item._id);
+    expect(repeated.readAt).toEqual(first.readAt);
+    expect(repeated.updatedAt).toEqual(first.updatedAt);
+  });
+
+  it('requires authentication and excludes projects with removed membership', async () => {
+    const ctx = await fixture();
+    const item = await ctx.add();
+    await request(app).patch('/api/v1/notifications/read-all').expect(401);
+    await request(app).patch('/api/v1/notifications/read-all').set('Authorization', 'Bearer invalid').expect(401);
+    await Board.updateOne({ _id: ctx.board._id }, { $pull: { members: { user: ctx.recipient._id } } });
+    expect((await markAll(ctx).expect(200)).body.data.modifiedCount).toBe(0);
+    expect((await Notification.findById(item._id)).readAt).toBeNull();
+  });
+
+  it('marks accessible retained history even when the task and actor were deleted', async () => {
+    const ctx = await fixture();
+    await ctx.add();
+    await Card.deleteOne({ _id: ctx.card._id });
+    await User.deleteOne({ _id: ctx.actor._id });
+    expect((await markAll(ctx).expect(200)).body.data.modifiedCount).toBe(1);
+  });
+
+  it('leaves a notification arriving after selection unread', async () => {
+    const ctx = await fixture();
+    const earlier = await ctx.add();
+    const updateMany = Notification.updateMany.bind(Notification);
+    let arriving;
+    vi.spyOn(Notification, 'updateMany').mockImplementationOnce(async (...args) => {
+      arriving = await ctx.add();
+      return updateMany(...args);
+    });
+    expect((await markAll(ctx).expect(200)).body.data.modifiedCount).toBe(1);
+    expect((await Notification.findById(earlier._id)).readAt).toBeInstanceOf(Date);
+    expect((await Notification.findById(arriving._id)).readAt).toBeNull();
+    expect((await ctx.get().expect(200)).body.data.unreadCount).toBe(1);
+  });
+
+  it('preserves a concurrent single-item read and reports only remaining changes', async () => {
+    const ctx = await fixture();
+    const item = await ctx.add();
+    await ctx.add();
+    const updateMany = Notification.updateMany.bind(Notification);
+    const firstRead = new Date('2026-01-01');
+    vi.spyOn(Notification, 'updateMany').mockImplementationOnce(async (...args) => {
+      await Notification.updateOne({ _id: item._id }, { $set: { readAt: firstRead } });
+      return updateMany(...args);
+    });
+    expect((await markAll(ctx).expect(200)).body.data.modifiedCount).toBe(1);
+    expect((await Notification.findById(item._id)).readAt).toEqual(firstRead);
+  });
+
+  it('returns a generic error if the bulk write fails', async () => {
+    const ctx = await fixture();
+    const item = await ctx.add();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(Notification, 'updateMany').mockRejectedValueOnce(new Error('Private database details'));
+    const res = await markAll(ctx).expect(500);
+    expect(res.body.error).toEqual({ code: 'SERVER', message: 'Could not mark notifications as read.' });
+    expect((await Notification.findById(item._id)).readAt).toBeNull();
+  });
+});
+
 describe('mark one notification as read', () => {
   function mark(ctx, id, body = {}) {
     return request(app).patch(`/api/v1/notifications/${id}/read`)

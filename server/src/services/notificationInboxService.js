@@ -130,3 +130,25 @@ export async function markNotificationRead({ recipientId, notificationId }) {
   if (!existing) notificationNotFound();
   return existing;
 }
+
+export async function markAllNotificationsRead({ recipientId }) {
+  const boards = await Board.find({ 'members.user': recipientId }).select('_id').lean();
+  const filter = {
+    recipient: recipientId,
+    board: { $in: boards.map((board) => board._id) },
+    readAt: null,
+  };
+  // Capture IDs rather than updating a moving unread query. Notifications that
+  // arrive after this selection must remain unread for the next inbox refresh.
+  const unread = await Notification.find(filter).select('_id').lean();
+  if (!unread.length) return { modifiedCount: 0 };
+
+  const result = await Notification.updateMany(
+    { ...filter, _id: { $in: unread.map((notification) => notification._id) } },
+    { $set: { readAt: new Date() } },
+    { runValidators: true }
+  );
+  // Keep readAt:null in the write filter: a competing single/bulk read may
+  // already have set it. Preserve that timestamp and count only actual changes.
+  return { modifiedCount: result.modifiedCount };
+}
