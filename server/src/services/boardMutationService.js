@@ -1,4 +1,5 @@
 import Card from '../models/Card.js';
+import { appEvents, EVENTS } from '../events/eventBus.js';
 import List from '../models/List.js';
 import Board from '../models/Board.js';
 import Workflow from '../models/Workflow.js';
@@ -179,7 +180,8 @@ export async function deleteList({ boardId, listId }) {
   return true;
 }
 
-export async function createCard({ boardId, title, listId, position, tag, status, assignee, dueDate, workflowId }) {
+export async function createCard({ boardId, actorId, title, listId, position, tag, status, assignee, dueDate, workflowId }) {
+  if (!actorId) throw makeMutationError('An authenticated actor is required.');
   const safeTitle = typeof title === 'string' ? title.trim() : '';
   if (!safeTitle || !listId) {
     throw makeMutationError('Card title and listId are required.');
@@ -209,10 +211,16 @@ export async function createCard({ boardId, title, listId, position, tag, status
     position: position ?? 1000,
   });
 
+  if (card.assignee) {
+    await appEvents.publish(EVENTS.CARD_ASSIGNED, {
+      actorId, assigneeId: card.assignee, boardId: card.board, cardId: card._id,
+    });
+  }
   return populateCardPeople(card);
 }
 
-export async function updateCard({ boardId, cardId, updates }) {
+export async function updateCard({ boardId, actorId, cardId, updates }) {
+  if (!actorId) throw makeMutationError('An authenticated actor is required.');
   if (updates.checklist !== undefined) {
     throw makeMutationError('Use checklistOperation to edit individual items.');
   }
@@ -254,6 +262,31 @@ export async function updateCard({ boardId, cardId, updates }) {
 
     safeUpdates.list = updates.list;
     safeUpdates.workflow = targetWorkflow._id;
+  }
+
+  if (safeUpdates.assignee !== undefined) {
+    // Return the pre-write document from the atomic update. A separate read
+    // could see a stale assignee when two requests assign the same person.
+    // Supply updatedAt explicitly so the returned response can be reconstructed
+    // from this exact write without a second read racing another mutation.
+    const savedFields = { ...safeUpdates, updatedAt: new Date() };
+    const previous = await Card.findOneAndUpdate(
+      { _id: cardId, board: boardId },
+      { $set: savedFields },
+      { returnDocument: 'before', runValidators: true, timestamps: false }
+    );
+    if (!previous) throw makeMutationError('Card not found.', 404, 'NOT_FOUND');
+
+    const previousAssignee = previous.assignee?.toString();
+    previous.set(savedFields);
+    // `previous` now represents the saved result, not an additional database
+    // write. Clearing an assignment or retaining it does not publish an event.
+    if (previous.assignee && previous.assignee.toString() !== previousAssignee) {
+      await appEvents.publish(EVENTS.CARD_ASSIGNED, {
+        actorId, assigneeId: previous.assignee, boardId: previous.board, cardId: previous._id,
+      });
+    }
+    return populateCardPeople(previous);
   }
 
   const card = await Card.findOneAndUpdate(

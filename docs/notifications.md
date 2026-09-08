@@ -2,8 +2,9 @@
 
 Steps 1 and 2 define the notification schema and an internal creation service.
 Step 3A registers an internal assignment subscriber during server startup.
-No production action publishes assignment events yet. There are no notification
-routes, Socket.IO delivery changes, or frontend controls in these slices.
+Step 3B connects card creation and assignment changes to it through the shared
+mutation service. Assignments now persist notifications. There are still no
+notification routes, Socket.IO notification delivery, or frontend inbox controls.
 
 ## Reading the model
 
@@ -122,8 +123,9 @@ Creation skips users/projects/cards already missing when checked and recipients
 whose membership has already been removed. These queries and the save are **not
 one transaction**: records can change between a check and the write. Therefore
 the future inbox API must check current access and tolerate missing references.
-Cleanup of already-saved notifications on deletion/removal is still deferred and
-must be implemented or deliberately handled before enabling production triggers.
+Already-saved notifications are currently retained on deletion/removal and may
+contain dangling IDs. No inbox API exposes them yet. Cleanup and read-time access
+checks must be addressed before exposing the inbox to users.
 
 ### Database tests
 
@@ -180,7 +182,7 @@ listening for requests. A WeakMap remembers each bus's cleanup function to make
 setup idempotent. Cleanup removes the listener and is called when the HTTP server
 closes. Cleanup affects future publications, not already-running handlers.
 
-### Illustrative publisher (not connected yet)
+### Publisher call
 
 ```js
 await appEvents.publish(EVENTS.CARD_ASSIGNED, {
@@ -191,9 +193,9 @@ await appEvents.publish(EVENTS.CARD_ASSIGNED, {
 });
 ```
 
-Step 3B will add this at the successful assignment boundary using saved server
-data, covering REST and Socket.IO without double publishing. It must distinguish
-a new assignment from an unchanged assignee or removal of an assignment.
+Step 3B adds this at the successful assignment boundary using saved server data,
+covering REST and Socket.IO without double publishing. The implementation below
+distinguishes new assignments from unchanged or removed assignments.
 
 ### Guarantees and limits
 
@@ -221,5 +223,79 @@ Run from `server`:
 npm test -- src/__tests__/eventBus.test.js src/__tests__/notificationSubscriber.test.js
 ```
 
-Stop for review here. Assigning a card still generates no notification, and there
-is no new UI. The next slice is step 3B: connect real assignment publishers.
+At the step 3A checkpoint, no real assignments published yet. Step 3B below
+connects those publishers; the frontend remains unchanged.
+
+## Step 3B: publishing real assignments
+
+The same shared `boardMutationService.js` handles REST and Socket.IO card writes.
+Publishing there means each successful mutation publishes at most one assignment
+event; transport controllers do not publish a second copy.
+
+### Follow the code
+
+1. `cardController.js` passes `req.user._id` as `actorId`; `socket.js` passes
+   `socket.data.user._id`. Both IDs come from authentication, not client input.
+2. `createCard()` validates and saves the card, then publishes if the saved card
+   has an assignee. The payload carries the saved card/project/assignee IDs.
+3. `updateCard()` validates fields as before. When an assignee is supplied, its
+   atomic `findOneAndUpdate()` requests `returnDocument: 'before'`.
+4. That pre-write document contains the assignee immediately before this exact
+   write. Compare that value to the saved assignment, and publish only if the new
+   value is non-null and different.
+5. The bus awaits the subscriber, which calls the creation service. The service
+   still skips self-notifications and stale/ineligible references.
+6. The mutation returns its card result as before, and REST/Socket.IO continues
+   with activity recording and its normal response/broadcast behavior.
+
+### Why return the old document?
+
+Reading the old assignee with a separate `findOne()` is vulnerable to a race:
+two requests could both read "unassigned", both assign Sam, and both publish.
+Returning the old value from the atomic write means the second identical
+assignment sees Sam already assigned and does not publish.
+
+The assignment branch explicitly writes `updatedAt` and disables automatic
+timestamps for that one operation. It then applies the validated saved fields
+to the returned pre-write document in memory, producing the card response for
+that exact write. `.set(savedFields)` is **not** another save. This avoids a
+second read that could accidentally return a different concurrent mutation.
+Other card updates retain their existing return-after behavior.
+
+| Mutation | Publish assignment event? | Save notification? |
+| --- | --- | --- |
+| Create a card assigned to a teammate | Yes | If eligible |
+| Change unassigned to a teammate | Yes | If eligible |
+| Change teammate A to teammate B | Yes, for B | If eligible |
+| Save the same assignee again | No | No |
+| Remove the assignee | No | No |
+| Edit title, description, checklist, or position only | No | No |
+| Assign yourself | Yes | No: service skips it |
+| Validation, authorization, or card write fails | No | No |
+
+### Failures and current limitations
+
+The card write completes before publication. A rejected notification save is
+collected and logged by the bus, so that failure does not turn the successful
+assignment into a failed REST response or socket acknowledgement. It is not
+automatically retried. Awaiting the subscriber still adds latency to the mutation.
+
+This is not a transaction across card writes and notifications. A process crash
+between them can lose a notification; later reassignments can also make a saved
+notification historical rather than current. Atomic comparison prevents duplicate
+events for concurrent identical assignments, not general exactly-once delivery.
+Retained notifications and deleted references must be handled in the upcoming
+inbox API and lifecycle cleanup work before users can read this data.
+
+### Verification and review checkpoint
+
+The assignment notification tests in `permissions.test.js` register the real
+subscriber and exercise both REST and Socket.IO against the isolated database.
+They cover creation, reassignment, no-op updates, unassignment, self-actions,
+validation failures, concurrent identical assignments, authenticated actor identity,
+and card success despite failed notification persistence. Existing permission
+tests continue to verify unauthorized mutations are rejected.
+
+Run `npm test` from `server` for the full suite. There is still no bell to test
+in the UI. Stop here for review and commit; the next slice is the notification
+read API with ownership checks and handling of stale project/task references.

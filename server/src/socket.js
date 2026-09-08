@@ -230,7 +230,7 @@ export function configureSockets(io) {
 
     registerMutation(socket, 'card:create', async ({ boardId, title, listId, position, tag, status, assignee, dueDate, workflowId }) => {
       const board = await requireBoardRole(socket, boardId, ['owner', 'admin', 'member']);
-      const card = await createCard({ boardId: board._id, title, listId, position, tag, status, assignee, dueDate, workflowId });
+      const card = await createCard({ boardId: board._id, actorId: socket.data.user._id, title, listId, position, tag, status, assignee, dueDate, workflowId });
       const activity = await recordActivity({
         socket,
         boardId: board._id,
@@ -248,7 +248,7 @@ export function configureSockets(io) {
 
     registerMutation(socket, 'card:update', async ({ boardId, cardId, updates }) => {
       const board = await requireBoardRole(socket, boardId, ['owner', 'admin', 'member']);
-      const card = await updateCard({ boardId: board._id, cardId, updates: updates || {} });
+      const card = await updateCard({ boardId: board._id, actorId: socket.data.user._id, cardId, updates: updates || {} });
       const action = updates?.position !== undefined || updates?.list !== undefined ? 'card.moved' : 'card.updated';
       const activity = await recordActivity({
         socket,
@@ -265,7 +265,7 @@ export function configureSockets(io) {
 
     registerMutation(socket, 'card:move', async ({ boardId, cardId, position, list }) => {
       const board = await requireBoardRole(socket, boardId, ['owner', 'admin', 'member']);
-      const card = await updateCard({ boardId: board._id, cardId, updates: { position, list } });
+      const card = await updateCard({ boardId: board._id, actorId: socket.data.user._id, cardId, updates: { position, list } });
       const activity = await recordActivity({
         socket,
         boardId: board._id,

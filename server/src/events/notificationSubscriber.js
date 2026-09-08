@@ -11,7 +11,7 @@ export function registerNotificationSubscriber(bus = appEvents) {
   const unsubscribe = bus.subscribe(EVENTS.CARD_ASSIGNED, async ({
     actorId, assigneeId, boardId, cardId,
   }) => {
-    // A future publisher supplies facts from the saved assignment. The handler
+    // The mutation service supplies facts from the saved assignment. The handler
     // maps the assignee to the recipient; the service checks eligibility.
     return createNotification({
       actorId,

@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
-// One document belongs to one recipient. A future event handler will create
-// these documents; defining this model does not send or generate notifications.
+// One document belongs to one recipient. The notification subscriber creates
+// these through the service; the model itself performs no delivery.
 const notificationSchema = new mongoose.Schema(
   {
     recipient: {

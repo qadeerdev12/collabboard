@@ -24,8 +24,8 @@ const io = new Server(httpServer, {
 app.set('io', io);
 
 await connectDB();
-// Register once after database connection, before accepting requests. No card
-// mutation publishes assignment events yet; this only prepares the subscriber.
+// Register after database connection and before accepting requests so card
+// assignment events have a subscriber ready to persist their notifications.
 const stopNotificationSubscriber = registerNotificationSubscriber();
 httpServer.once('close', stopNotificationSubscriber);
 // Socket handlers live outside this bootstrap file so auth, presence, and board

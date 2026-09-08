@@ -22,7 +22,7 @@ export async function createCard(req, res) {
         if (!board) {
             return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Board not found.' } });
         }
-        const card = await createCardMutation({ boardId: board._id, title, listId, position, tag, status, assignee, dueDate, workflowId });
+        const card = await createCardMutation({ boardId: board._id, actorId: req.user._id, title, listId, position, tag, status, assignee, dueDate, workflowId });
         const activity = await recordActivity({
             io: req.app.get('io'),
             boardId: board._id,
@@ -50,6 +50,7 @@ export async function updateCard(req, res) {
         const action = req.body.position !== undefined || req.body.list !== undefined ? 'card.moved' : 'card.updated';
         const card = await updateCardMutation({
             boardId: board._id,
+            actorId: req.user._id,
             cardId: req.params.cardId,
             updates: req.body,
         });

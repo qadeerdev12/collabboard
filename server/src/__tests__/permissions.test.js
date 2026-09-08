@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'http';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
@@ -18,8 +18,134 @@ import Message from '../models/Message.js';
 import Workflow from '../models/Workflow.js';
 import GitHubAccount from '../models/GitHubAccount.js';
 import BoardGitHubIntegration from '../models/BoardGitHubIntegration.js';
+import Notification from '../models/Notification.js';
+import { appEvents, EVENTS } from '../events/eventBus.js';
+import { registerNotificationSubscriber } from '../events/notificationSubscriber.js';
 
 let mongo;
+
+describe('assignment notification publishing', () => {
+  async function setup(transport) {
+    const server = transport === 'socket' ? await startSocketServer() : null;
+    const app = server?.app || createApp();
+    const owner = await register(app, 'Owner', 'notify-owner@example.com');
+    const member = await register(app, 'Member', 'notify-member@example.com');
+    const other = await register(app, 'Other', 'notify-other@example.com');
+    const outsider = await register(app, 'Outsider', 'notify-outsider@example.com');
+    const board = await createBoardWithOwner(app, owner.token);
+    await addMember(app, owner.token, board._id, member.user.email);
+    await addMember(app, owner.token, board._id, other.user.email);
+    const list = await createListForBoard(app, owner.token, board._id);
+    let socket;
+    if (server) {
+      socket = connectSocket(server.url, owner.token);
+      await waitForConnect(socket);
+      await emitWithAck(socket, 'board:join', { boardId: board._id });
+    }
+    const stop = registerNotificationSubscriber();
+    const events = [];
+    const stopObserve = appEvents.subscribe(EVENTS.CARD_ASSIGNED, (event) => { events.push(event); });
+    async function mutate(cardId, body) {
+      if (socket) {
+        const ack = await emitWithAck(socket, cardId ? 'card:update' : 'card:create',
+          cardId ? { boardId: board._id, cardId, updates: body } : { boardId: board._id, ...body });
+        return { ok: ack.ok, card: ack.data?.card };
+      }
+      const base = `/api/v1/boards/${board._id}/cards`;
+      const res = await (cardId ? request(app).patch(`${base}/${cardId}`) : request(app).post(base))
+        .set('Authorization', `Bearer ${owner.token}`).send(body);
+      return { ok: res.status < 400, card: res.body.data?.card };
+    }
+    return {
+      owner, member, other, outsider, board, list, events, mutate,
+      async close() {
+        stopObserve();
+        stop();
+        vi.restoreAllMocks();
+        socket?.disconnect();
+        if (server) await server.close();
+      },
+    };
+  }
+
+  it.each(['REST', 'socket'])('%s publishes only new non-empty assignments and persists notifications', async (transport) => {
+    const ctx = await setup(transport);
+    try {
+      const { owner, member, other, outsider, list, events, mutate } = ctx;
+      const created = await mutate(null, {
+        title: 'Assignment task', listId: list._id, assignee: member.user.id,
+        actorId: outsider.user.id, // Must never override the authenticated actor.
+      });
+      expect(created.ok).toBe(true);
+      expect(created.card.assignee._id).toBe(member.user.id);
+      expect(events).toHaveLength(1);
+      let notifications = await Notification.find({}).lean();
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0].actor.toString()).toBe(owner.user.id);
+      expect(notifications[0].recipient.toString()).toBe(member.user.id);
+      expect(notifications[0].card.toString()).toBe(created.card._id);
+      expect(notifications[0].readAt).toBeNull();
+
+      const same = await mutate(created.card._id, { assignee: member.user.id, description: 'Updated notes' });
+      expect(same.ok).toBe(true);
+      expect(same.card.description).toBe('Updated notes');
+      expect((await mutate(created.card._id, { title: 'Renamed' })).ok).toBe(true);
+      expect((await mutate(created.card._id, { checklistOperation: { action: 'add', title: 'A step' } })).ok).toBe(true);
+      expect(events).toHaveLength(1);
+
+      expect((await mutate(created.card._id, { assignee: other.user.id })).ok).toBe(true);
+      expect(events).toHaveLength(2);
+      expect(await Notification.countDocuments({ recipient: other.user.id })).toBe(1);
+      const cleared = await mutate(created.card._id, { assignee: null });
+      expect(cleared.ok).toBe(true);
+      expect(cleared.card.assignee).toBeNull();
+      expect(events).toHaveLength(2);
+
+      expect((await mutate(created.card._id, { assignee: owner.user.id })).ok).toBe(true);
+      expect(events).toHaveLength(3); // Self-action is filtered by the service.
+      expect(await Notification.countDocuments()).toBe(2);
+
+      expect((await mutate(created.card._id, { assignee: outsider.user.id })).ok).toBe(false);
+      expect((await mutate(created.card._id, { assignee: member.user.id, tag: 'Invalid' })).ok).toBe(false);
+      expect((await mutate(new mongoose.Types.ObjectId().toString(), { assignee: member.user.id })).ok).toBe(false);
+      expect(events).toHaveLength(3);
+      expect((await Card.findById(created.card._id)).assignee.toString()).toBe(owner.user.id);
+      const unassigned = await mutate(null, { title: 'Unassigned', listId: list._id });
+      expect(unassigned.ok).toBe(true);
+      expect(events).toHaveLength(3);
+    } finally { await ctx.close(); }
+  });
+
+  it.each(['REST', 'socket'])('%s concurrent identical assignments publish once', async (transport) => {
+    const ctx = await setup(transport);
+    try {
+      const created = await ctx.mutate(null, { title: 'Concurrent assignment', listId: ctx.list._id });
+      const results = await Promise.all([
+        ctx.mutate(created.card._id, { assignee: ctx.member.user.id }),
+        ctx.mutate(created.card._id, { assignee: ctx.member.user.id }),
+      ]);
+      expect(results.every((result) => result.ok)).toBe(true);
+      expect(ctx.events).toHaveLength(1);
+      expect(await Notification.countDocuments({ card: created.card._id })).toBe(1);
+    } finally { await ctx.close(); }
+  });
+
+  it.each(['REST', 'socket'])('%s still saves and returns the card when notification persistence fails', async (transport) => {
+    const ctx = await setup(transport);
+    try {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(Notification.prototype, 'save').mockRejectedValue(new Error('Notification storage unavailable'));
+      const created = await ctx.mutate(null, { title: 'Saved despite notification failure', listId: ctx.list._id, assignee: ctx.member.user.id });
+      expect(created.ok).toBe(true);
+      const updated = await ctx.mutate(created.card._id, { assignee: ctx.other.user.id });
+      expect(updated.ok).toBe(true);
+      expect(updated.card.assignee._id).toBe(ctx.other.user.id);
+      expect((await Card.findById(created.card._id)).assignee.toString()).toBe(ctx.other.user.id);
+      expect(await Notification.countDocuments()).toBe(0);
+      expect(log).toHaveBeenCalledWith('Subscriber failed for card.assigned:', 'Notification storage unavailable');
+    } finally { await ctx.close(); }
+  });
+});
 
 describe('My Tasks access', () => {
   it('returns only the authenticated assignee\'s tasks in current projects with navigation context', async () => {
@@ -163,6 +289,7 @@ afterEach(async () => {
     Workflow.deleteMany({}),
     GitHubAccount.deleteMany({}),
     BoardGitHubIntegration.deleteMany({}),
+    Notification.deleteMany({}),
   ]);
 });
 
