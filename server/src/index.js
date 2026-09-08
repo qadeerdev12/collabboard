@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import { connectDB } from './config/db.js'; //import the DB connection function
 import { allowedClientOrigins, createApp } from './app.js';
 import { configureSockets } from './socket.js';
+import { registerNotificationSubscriber } from './events/notificationSubscriber.js';
 
 // Keep HTTP and Socket.IO CORS in sync. CLIENT_ORIGIN accepts a comma-separated
 // list so local dev can use either localhost or 127.0.0.1, and deploys can add
@@ -23,6 +24,10 @@ const io = new Server(httpServer, {
 app.set('io', io);
 
 await connectDB();
+// Register once after database connection, before accepting requests. No card
+// mutation publishes assignment events yet; this only prepares the subscriber.
+const stopNotificationSubscriber = registerNotificationSubscriber();
+httpServer.once('close', stopNotificationSubscriber);
 // Socket handlers live outside this bootstrap file so auth, presence, and board
 // mutation events can evolve without turning server startup into a catch-all.
 configureSockets(io);

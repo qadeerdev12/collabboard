@@ -1,9 +1,9 @@
-# Notifications: data model and creation service
+# Notifications: model, service, and internal events
 
 Steps 1 and 2 define the notification schema and an internal creation service.
-The service can persist notifications, but no production action calls it yet.
-There are no notification routes, event subscribers, Socket.IO changes, or
-frontend controls in these slices.
+Step 3A registers an internal assignment subscriber during server startup.
+No production action publishes assignment events yet. There are no notification
+routes, Socket.IO delivery changes, or frontend controls in these slices.
 
 ## Reading the model
 
@@ -136,6 +136,90 @@ the service propagates the error.
 
 Run from `server`: `npm test -- src/__tests__/notificationService.test.js`.
 
-Stop here for code review. Step 3 will connect a real assignment event to this
-service, introducing the publisher and subscriber. There is no visible UI change
-to test yet.
+## Step 3A: internal pub/sub
+
+An event is a statement of something that happened. A publisher announces it;
+subscribers choose which event names they want to handle. The publisher does not
+need to import the notification service or know what an inbox document looks like.
+
+### Read the event bus first
+
+`server/src/events/eventBus.js` wraps Node's built-in `EventEmitter`:
+
+1. `EVENTS.CARD_ASSIGNED` gives publishers and subscribers the same event name.
+2. `createEventBus()` makes an isolated bus. The exported `appEvents` is the
+   shared instance for this server process; tests use separate instances.
+3. `subscribe(name, handler)` registers a function and returns a cleanup function.
+4. `publish(name, payload)` takes a snapshot of handlers registered for that name.
+5. Each handler runs inside `Promise.resolve().then(...)`, converting both a
+   synchronous throw and an async rejection into a rejected promise.
+6. `Promise.allSettled()` waits for all handlers, even if some fail. It returns
+   `{ status: 'fulfilled', value }` or `{ status: 'rejected', reason }` per handler.
+7. Failures are logged and results returned, instead of subscriber failures
+   rejecting publication and making a future already-saved card update look failed.
+
+Why not just use `emitter.emit()`? It calls listeners but does not await async
+listeners' promises. This wrapper gives the publisher an explicit completion
+point. Awaiting publication adds subscriber latency to the caller; it is not a
+background job queue. A handler that never settles will keep publication pending.
+Subscribers run concurrently and must not depend on each other's completion order.
+
+### Then read the subscriber
+
+`server/src/events/notificationSubscriber.js` subscribes to `card.assigned` and
+maps `{ actorId, assigneeId, boardId, cardId }` to the creation service's arguments.
+In particular, `assigneeId` becomes `recipientId`. The event name is fixed by the
+subscriber rather than accepting an arbitrary notification type in the payload.
+
+The subscriber returns the service promise so the bus can await it. A saved
+document becomes a fulfilled result; an intentional skip becomes a fulfilled
+`null`; a service failure becomes a rejected result collected by the bus.
+
+Registration happens once after `connectDB()` in `server/src/index.js`, before
+listening for requests. A WeakMap remembers each bus's cleanup function to make
+setup idempotent. Cleanup removes the listener and is called when the HTTP server
+closes. Cleanup affects future publications, not already-running handlers.
+
+### Illustrative publisher (not connected yet)
+
+```js
+await appEvents.publish(EVENTS.CARD_ASSIGNED, {
+  actorId,
+  assigneeId,
+  boardId,
+  cardId,
+});
+```
+
+Step 3B will add this at the successful assignment boundary using saved server
+data, covering REST and Socket.IO without double publishing. It must distinguish
+a new assignment from an unchanged assignee or removal of an assignment.
+
+### Guarantees and limits
+
+- The bus exists only in one running Node process; it does not reach other server
+  instances or the browser. Socket.IO delivery comes in a later step.
+- There is no durable queue, replay, retry, or event deduplication. An event with
+  no current subscribers returns an empty result array and is not retained.
+- A crash before notification persistence can lose the notification. Database
+  persistence protects a notification only after its write succeeds.
+- Registering twice is prevented; publishing the same event twice can still
+  create two notifications. Those are separate problems.
+- This internal event bus is not an authorization boundary. It must receive
+  trusted event data from authorized server mutations, never arbitrary client events.
+
+### Tests and review checkpoint
+
+`eventBus.test.js` verifies event routing, awaiting async work, isolating failures,
+unsubscribe behavior, and the absence of replay. `notificationSubscriber.test.js`
+uses a mocked creation service to verify payload mapping, duplicate setup/cleanup,
+skips, and failures. Actual persistence remains covered by the step 2 tests.
+
+Run from `server`:
+
+```sh
+npm test -- src/__tests__/eventBus.test.js src/__tests__/notificationSubscriber.test.js
+```
+
+Stop for review here. Assigning a card still generates no notification, and there
+is no new UI. The next slice is step 3B: connect real assignment publishers.
