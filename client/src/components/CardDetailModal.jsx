@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { boardApi } from '../lib/api'
 import { CARD_STATUSES, CARD_TAGS, statusDotStyle, tagStyle } from '../lib/cardMeta'
 import ConfirmDialog from './ConfirmDialog'
+import CardChecklist from './CardChecklist'
 
 function memberUserId(member) {
   return member.user?.id || member.user?._id || member.user
@@ -366,6 +367,8 @@ export default function CardDetailModal({
               className="w-full resize-y rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2.5 text-sm leading-6 text-zinc-950 outline-none transition placeholder:text-zinc-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500"
             />
           </label>
+
+          <CardChecklist card={card} onSave={onSave} disabled={saving || deleting} />
 
           <section className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex items-center justify-between gap-3">

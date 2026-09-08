@@ -21,6 +21,97 @@ import BoardGitHubIntegration from '../models/BoardGitHubIntegration.js';
 
 let mongo;
 
+describe('card checklists', () => {
+  async function fixture(app) {
+    const owner = await register(app, 'Owner', 'check-owner@example.com');
+    const member = await register(app, 'Member', 'check-member@example.com');
+    const outsider = await register(app, 'Outsider', 'check-outsider@example.com');
+    const board = await createBoardWithOwner(app, owner.token);
+    await addMember(app, owner.token, board._id, member.user.email);
+    const list = await createListForBoard(app, owner.token, board._id);
+    const card = await Card.create({ board: board._id, list: list._id, title: 'Checklist task', position: 1000 });
+    const url = `/api/v1/boards/${board._id}/cards/${card._id}`;
+    const patch = (operation, token = member.token) => request(app).patch(url)
+      .set('Authorization', `Bearer ${token}`).send({ checklistOperation: operation });
+    return { owner, member, outsider, board, card, url, patch };
+  }
+
+  it('persists item edits without losing concurrent changes and keeps card details intact', async () => {
+    const { card, patch } = await fixture(createApp());
+    expect(card.checklist).toHaveLength(0);
+    await Promise.all([
+      patch({ action: 'add', title: '  API tests  ' }).expect(200),
+      patch({ action: 'add', title: 'Documentation' }).expect(200),
+    ]);
+    const saved = await Card.findById(card._id);
+    expect(saved.checklist).toHaveLength(2);
+    const api = saved.checklist.find((item) => item.title === 'API tests');
+    const docs = saved.checklist.find((item) => item.title === 'Documentation');
+    await Promise.all([
+      patch({ action: 'update', itemId: api.id, completed: true }).expect(200),
+      patch({ action: 'update', itemId: docs.id, title: 'API documentation' }).expect(200),
+    ]);
+    const updated = await Card.findById(card._id);
+    expect(updated.checklist.id(api.id).completed).toBe(true);
+    expect(updated.checklist.id(docs.id).title).toBe('API documentation');
+    expect(updated.status).toBe('Todo');
+    await patch({ action: 'update', itemId: api.id, completed: false }).expect(200);
+    const removed = await patch({ action: 'remove', itemId: docs.id }).expect(200);
+    expect(removed.body.data.card.checklist).toHaveLength(1);
+    expect(removed.body.data.card.checklist[0].completed).toBe(false);
+    await patch({ action: 'update', itemId: docs.id, completed: true }).expect(404);
+  });
+
+  it('enforces membership, item ownership, input validation, and the atomic item limit', async () => {
+    const app = createApp();
+    const { card, url, member, outsider, patch } = await fixture(app);
+    await patch({ action: 'add', title: 'Private' }, outsider.token).expect(404);
+    for (const operation of [null, { action: 'wrong' }, { action: 'add', title: ' ' }, { action: 'add', title: 'x'.repeat(301) }, { action: 'update', itemId: 'bad', completed: true }]) {
+      await patch(operation).expect(400);
+    }
+    await patch({ action: 'update', itemId: new mongoose.Types.ObjectId().toString(), completed: true }).expect(404);
+    const added = await patch({ action: 'add', title: 'Test' }).expect(200);
+    await patch({ action: 'update', itemId: added.body.data.card.checklist[0]._id, completed: 'true' }).expect(400);
+    await request(app).patch(url).set('Authorization', `Bearer ${member.token}`).send({ checklist: [] }).expect(400);
+    await request(app).patch(url).set('Authorization', `Bearer ${member.token}`).send({ title: 'Changed', checklistOperation: { action: 'add', title: 'Test' } }).expect(400);
+    await Card.updateOne({ _id: card._id }, { $set: { checklist: Array.from({ length: 99 }, (_, i) => ({ title: `Item ${i}` })) } });
+    const results = await Promise.all([patch({ action: 'add', title: 'A' }), patch({ action: 'add', title: 'B' })]);
+    expect(results.map((res) => res.status).sort()).toEqual([200, 400]);
+    expect((await Card.findById(card._id)).checklist).toHaveLength(100);
+  });
+
+  it('broadcasts saved checklist changes over sockets and the REST fallback', async () => {
+    const server = await startSocketServer();
+    const sockets = [];
+    try {
+      const { owner, member, outsider, board, card, patch } = await fixture(server.app);
+      const sender = connectSocket(server.url, owner.token);
+      const viewer = connectSocket(server.url, member.token);
+      const denied = connectSocket(server.url, outsider.token);
+      sockets.push(sender, viewer, denied);
+      await Promise.all(sockets.map(waitForConnect));
+      await emitWithAck(sender, 'board:join', { boardId: board._id });
+      await emitWithAck(viewer, 'board:join', { boardId: board._id });
+      const payload = { boardId: board._id, cardId: card.id, updates: { checklistOperation: { action: 'add', title: 'Live item' } } };
+      expect((await emitWithAck(denied, 'card:update', payload)).ok).toBe(false);
+      const nextUpdate = () => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Missing checklist broadcast')), 2000);
+        viewer.once('card:updated', (event) => { clearTimeout(timer); resolve(event); });
+      });
+      const broadcast = nextUpdate();
+      const ack = await emitWithAck(sender, 'card:update', payload);
+      expect(ack.ok).toBe(true);
+      expect((await broadcast).card.checklist).toEqual(ack.data.card.checklist);
+      const restBroadcast = nextUpdate();
+      await patch({ action: 'update', itemId: ack.data.card.checklist[0]._id, completed: true }).expect(200);
+      expect((await restBroadcast).card.checklist[0].completed).toBe(true);
+    } finally {
+      sockets.forEach((socket) => socket.disconnect());
+      await server.close();
+    }
+  });
+});
+
 beforeAll(async () => {
   process.env.JWT_SECRET = 'test-secret';
   process.env.CLIENT_ORIGIN = 'http://localhost:5173';

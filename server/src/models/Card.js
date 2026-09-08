@@ -30,6 +30,13 @@ const cardSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    checklist: {
+      type: [new mongoose.Schema({
+        title: { type: String, required: true, trim: true, maxlength: 300 },
+        completed: { type: Boolean, default: false },
+      })],
+      default: [],
+    },
     tag: {
       type: String,
       enum: ['Task', 'Feature', 'Bug', 'Design', 'Research', 'Docs', 'Chore'],

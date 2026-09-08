@@ -1795,7 +1795,7 @@ export default function BoardPage() {
     )
     replaceCard(data.card)
     prependActivity(data.activity)
-    toast.success('Card saved', data.card.title)
+    if (!updates.checklistOperation) toast.success('Card saved', data.card.title)
   }
 
   async function handleDeleteCard(card) {

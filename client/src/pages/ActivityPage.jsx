@@ -60,7 +60,7 @@ export default function ActivityPage() {
     <div className="min-h-screen bg-stone-50 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100">
       <AppHeader />
 
-      <main className="mx-auto w-full max-w-4xl px-5 py-6 sm:px-6">
+      <main className="mx-auto w-full max-w-[1760px] px-4 py-5 sm:px-6 lg:py-7 2xl:px-8">
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-teal-700 dark:text-teal-300">Activity</p>

@@ -53,6 +53,12 @@ export async function updateCard(req, res) {
             cardId: req.params.cardId,
             updates: req.body,
         });
+        // REST fallback must also refresh connected collaborators' checklists.
+        if (req.body.checklistOperation) {
+            req.app.get('io')?.to(`board:${board._id}`).emit('card:updated', {
+                boardId: board._id.toString(), card,
+            });
+        }
         const activity = await recordActivity({
             io: req.app.get('io'),
             boardId: board._id,

@@ -4,6 +4,7 @@ import Board from '../models/Board.js';
 import Workflow from '../models/Workflow.js';
 import mongoose from 'mongoose';
 import Comment from '../models/Comment.js';
+import { updateChecklist } from './checklistService.js';
 import { ensureDefaultWorkflow, getFallbackWorkflow } from './workflowService.js';
 
 const CARD_TAGS = ['Task', 'Feature', 'Bug', 'Design', 'Research', 'Docs', 'Chore'];
@@ -212,6 +213,15 @@ export async function createCard({ boardId, title, listId, position, tag, status
 }
 
 export async function updateCard({ boardId, cardId, updates }) {
+  if (updates.checklist !== undefined) {
+    throw makeMutationError('Use checklistOperation to edit individual items.');
+  }
+  if (updates.checklistOperation !== undefined) {
+    if (Object.keys(updates).length !== 1) {
+      throw makeMutationError('Checklist operations must be saved separately from card details.');
+    }
+    return updateChecklist({ boardId, cardId, operation: updates.checklistOperation });
+  }
   const safeUpdates = {};
   if (updates.workflow !== undefined || updates.workflowId !== undefined) {
     throw makeMutationError('Moving cards between workflows is not supported yet.');

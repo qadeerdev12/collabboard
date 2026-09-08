@@ -107,6 +107,11 @@ export default function SortableCard({ card, onOpen }) {
         </span>
       </div>
       <p className="leading-5 text-zinc-900 dark:text-zinc-100">{card.title}</p>
+      {card.checklist?.length > 0 && (
+        <span className="mt-2 block text-xs font-medium text-teal-700 dark:text-teal-300">
+          {card.checklist.filter((item) => item.completed).length}/{card.checklist.length} to-dos complete
+        </span>
+      )}
       {(assignedTo || dateLabel) && (
         <div className="mt-3 flex items-center justify-between gap-2">
           {assignedTo ? (
