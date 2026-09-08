@@ -3,8 +3,9 @@
 Steps 1 and 2 define the notification schema and an internal creation service.
 Step 3A registers an internal assignment subscriber during server startup.
 Step 3B connects card creation and assignment changes to it through the shared
-mutation service. Assignments now persist notifications. There are still no
-notification routes, Socket.IO notification delivery, or frontend inbox controls.
+mutation service. Assignments now persist notifications. Step 4A exposes a
+read-only inbox API. Mark-as-read routes, Socket.IO notification delivery, and
+frontend inbox controls are still pending.
 
 ## Reading the model
 
@@ -123,9 +124,10 @@ Creation skips users/projects/cards already missing when checked and recipients
 whose membership has already been removed. These queries and the save are **not
 one transaction**: records can change between a check and the write. Therefore
 the future inbox API must check current access and tolerate missing references.
-Already-saved notifications are currently retained on deletion/removal and may
-contain dangling IDs. No inbox API exposes them yet. Cleanup and read-time access
-checks must be addressed before exposing the inbox to users.
+Already-saved notifications are retained on deletion/removal and may contain
+dangling IDs. Step 4A applies current project access checks and safe handling of
+missing references when reading them. Physical cleanup remains deferred; this
+read endpoint neither deletes notifications nor alters their read state.
 
 ### Database tests
 
@@ -284,8 +286,8 @@ This is not a transaction across card writes and notifications. A process crash
 between them can lose a notification; later reassignments can also make a saved
 notification historical rather than current. Atomic comparison prevents duplicate
 events for concurrent identical assignments, not general exactly-once delivery.
-Retained notifications and deleted references must be handled in the upcoming
-inbox API and lifecycle cleanup work before users can read this data.
+Retained notifications and deleted references are handled by the read-time policy
+in step 4A. Lifecycle cleanup remains separate work.
 
 ### Verification and review checkpoint
 
@@ -297,5 +299,103 @@ and card success despite failed notification persistence. Existing permission
 tests continue to verify unauthorized mutations are rejected.
 
 Run `npm test` from `server` for the full suite. There is still no bell to test
-in the UI. Stop here for review and commit; the next slice is the notification
-read API with ownership checks and handling of stale project/task references.
+in the UI. The step 3B checkpoint ends here; step 4A adds the read API below.
+
+## Step 4A: read-only inbox API
+
+```http
+GET /api/v1/notifications?limit=20
+Authorization: Bearer <your existing session token>
+```
+
+The response has the usual application envelope:
+
+```json
+{
+  "data": {
+    "notifications": [],
+    "unreadCount": 0,
+    "nextCursor": null
+  }
+}
+```
+
+Each notification contains `_id`, `type`, `createdAt`, `readAt`, project context
+as `board: { _id, name }`, and nullable `actor: { _id, name }` and
+`card: { _id, title }`. Email addresses, passwords, membership lists, and task
+descriptions are not returned. Responses use `Cache-Control: no-store`.
+
+### Read the code in request order
+
+1. `notificationRoutes.js` runs `protect` before the controller. Missing or invalid
+   credentials receive 401, using the existing authentication middleware.
+2. `notificationController.js` supplies `req.user._id` as the recipient. A client
+   cannot choose another recipient with query parameters. Only `limit` and
+   `cursor` are forwarded to the query service.
+3. `notificationInboxService.js` validates pagination, then runs an aggregation:
+   - `$match` restricts notifications to the authenticated recipient.
+   - `$lookup` finds the referenced project only if that recipient is still a member.
+   - `$unwind` discards notifications with no accessible project match.
+   - `$facet` sends the same access-filtered input into two branches: count all
+     unread records, and select the requested page.
+   - Page-only lookups add minimal actor and card context. Card lookup requires
+     both the card ID and matching project ID, preventing cross-project details.
+4. The controller returns the result. Validation errors receive 400; unexpected
+   database failures receive a generic 500 message.
+
+Aggregation pipelines do not automatically cast string IDs as Mongoose `find()`
+queries do, so the query explicitly converts the authenticated ID to an ObjectId.
+The access check occurs inside the database query, before pagination and counting;
+filtering hidden notifications after fetching a page would create short pages
+and an inaccurate or privacy-leaking unread count.
+
+### Pagination contract
+
+- `limit` defaults to 20 and must be an integer between 1 and 50.
+- Results sort by `createdAt` descending, then `_id` descending to break ties.
+- Pass the returned `nextCursor` unchanged as `cursor` for the next page.
+- The cursor encodes the last returned creation timestamp and ID as base64url
+  JSON. It is an ordering boundary, not a secret, signature, or authorization token.
+- The service fetches one extra record to decide whether another page exists.
+  `nextCursor: null` means no further records were visible at query time.
+- The next-page condition is an older timestamp OR the same timestamp with a
+  smaller ID. New notifications do not shift previously returned records as they
+  can with offset/skip pagination. Refresh page one to see new arrivals.
+- `unreadCount` covers the entire currently visible inbox, not only the page and
+  not only records older than the cursor. It may change between requests.
+
+The existing recipient index helps narrow the input. Access joins and the facet
+still process the recipient's notification history; this is not constant-time
+pagination or counting. Revisit retention/query performance if histories grow large.
+
+### Missing-reference policy
+
+| Condition | Inbox behavior | Unread count |
+| --- | --- | --- |
+| Different recipient | Excluded | Excluded |
+| Deleted project | Excluded | Excluded |
+| Recipient left/was removed from project | Excluded | Excluded |
+| Deleted task, accessible project | Retain history; `card: null` | Count if unread |
+| Card belongs to another project | Retain history; `card: null` | Count if unread |
+| Deleted actor | Retain history; `actor: null` | Count if unread |
+| Project membership notification | `card: null` is normal | Count if unread |
+
+The future frontend must show fallback text for a missing actor and must not
+render a task link when `card` is null. Project links still use the returned board.
+Returned names/titles reflect current records, not immutable event-time snapshots.
+Access can change after a response; opening the project/card must still enforce
+the normal access checks. Read-time filtering does not physically purge records;
+if a recipient rejoins a project, retained notifications can become visible again.
+
+### Verification and checkpoint
+
+`notificationInbox.test.js` exercises the real authenticated endpoint against
+isolated MongoDB. It tests empty results, recipient isolation, minimal response
+fields, global unread counts, tied timestamps, inserts between pages, lost project
+access, missing actors/cards, cross-project references, invalid pagination, and
+database error handling. GET is verified not to mark notifications as read.
+
+Run `npm test -- src/__tests__/notificationInbox.test.js` from `server` for this
+slice, or `npm test` for the full server suite. No frontend changes are included.
+Stop for review here. Step 4B will mark one owned notification as read; step 4C
+will handle marking all as read.
