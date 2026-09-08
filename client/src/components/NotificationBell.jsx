@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
-import { Bell, Inbox, RefreshCw, X } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Bell, Check, CheckCheck, Inbox, RefreshCw, X } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
 import { useNotificationInbox } from '../hooks/useNotificationInbox'
 
@@ -24,12 +24,19 @@ export default function NotificationBell({ onOpen }) {
 }
 
 function InboxBell({ token, onOpen }) {
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const root = useRef(null)
   const trigger = useRef(null)
   const panel = useRef(null)
   const id = useId()
   const inbox = useNotificationInbox(token)
+  const busy = inbox.loading || Boolean(inbox.pendingRead)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   const iconButton = 'grid h-9 w-9 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-500 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800'
 
   useEffect(() => {
@@ -57,6 +64,19 @@ function InboxBell({ token, onOpen }) {
     setOpen((value) => !value)
   }
 
+  async function openNotification(item) {
+    if (busy) return
+    // A failed write must not silently navigate away from its error. Already
+    // read items need no write. Missing cards fall back to the accessible project.
+    if (!item.readAt && !await inbox.markRead(item._id)) return
+    if (!mounted.current) return
+    setOpen(false)
+    const target = item.type !== 'member.added' && item.card
+      ? `/boards/${item.board._id}?card=${item.card._id}`
+      : `/boards/${item.board._id}`
+    navigate(target)
+  }
+
   return (
     <div ref={root} className="relative shrink-0">
       <button ref={trigger} type="button" onClick={toggle} title="Notifications" aria-label={`Notifications${inbox.unreadCount !== null ? `, ${inbox.unreadCount} unread` : ''}`} aria-expanded={open} aria-controls={open ? id : undefined} className={`${iconButton} relative border border-zinc-200 dark:border-zinc-800`}>
@@ -68,10 +88,14 @@ function InboxBell({ token, onOpen }) {
           <div className="flex shrink-0 items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
             <h2 className="min-w-0 flex-1 text-sm font-semibold">Notifications</h2>
             <span className="text-xs text-zinc-500 dark:text-zinc-400">{inbox.unreadCount === null ? '' : `${inbox.unreadCount} unread`}</span>
-            <button type="button" title="Refresh notifications" aria-label="Refresh notifications" disabled={inbox.loading} onClick={inbox.refresh} className={iconButton}><RefreshCw size={15} aria-hidden="true" /></button>
+            <button type="button" title="Refresh notifications" aria-label="Refresh notifications" disabled={busy} onClick={inbox.refresh} className={iconButton}><RefreshCw size={15} aria-hidden="true" /></button>
             <button type="button" title="Close notifications" aria-label="Close notifications" onClick={() => { setOpen(false); trigger.current?.focus() }} className={iconButton}><X size={17} aria-hidden="true" /></button>
           </div>
-          <div className="min-h-0 overflow-y-auto overscroll-contain" aria-busy={inbox.loading || inbox.loadingMore}>
+          <div className="flex shrink-0 justify-end border-b border-zinc-100 px-4 py-2 dark:border-zinc-800">
+            <button type="button" disabled={busy || !inbox.unreadCount || Boolean(inbox.error)} onClick={() => inbox.markRead()} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold text-teal-700 hover:bg-teal-50 disabled:opacity-50 dark:text-teal-300 dark:hover:bg-zinc-800"><CheckCheck size={15} aria-hidden="true" />{inbox.pendingRead === 'all' ? 'Marking all...' : 'Mark all as read'}</button>
+          </div>
+          {inbox.actionError && <p role="alert" className="shrink-0 border-b border-red-100 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:text-red-300">{inbox.actionError} Try the action again or refresh the inbox.</p>}
+          <div className="min-h-0 overflow-y-auto overscroll-contain" aria-busy={busy || inbox.loadingMore}>
             {inbox.loading ? (
               <div role="status" aria-label="Loading notifications" className="space-y-4 p-4"><span className="sr-only">Loading notifications</span>{[0, 1, 2].map((item) => <div key={item} className="space-y-2"><div className="h-3 w-3/4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" /><div className="h-3 w-1/2 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" /></div>)}</div>
             ) : inbox.error ? (
@@ -83,12 +107,13 @@ function InboxBell({ token, onOpen }) {
                 {inbox.notifications.map((item) => (
                   <li key={item._id} className={`flex gap-3 px-4 py-4 ${item.readAt ? '' : 'bg-teal-50/50 dark:bg-teal-500/5'}`}>
                     <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${item.readAt ? 'bg-transparent' : 'bg-teal-600'}`}><span className="sr-only">{item.readAt ? 'Read' : 'Unread'}</span></span>
-                    <div className="min-w-0 flex-1 break-words">
+                    <button type="button" disabled={busy} onClick={() => openNotification(item)} aria-label={`Open ${item.type !== 'member.added' && item.card ? item.card.title : item.board.name}`} className="min-w-0 flex-1 break-words rounded-sm text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-500 disabled:opacity-60">
                       <p className="text-sm leading-5"><span className="font-semibold">{item.actor?.name || 'Former member'}</span> {actions[item.type] || 'updated your project'}.</p>
                       {item.type !== 'member.added' && <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">{item.card?.title || 'Task no longer available'}</p>}
                       <p className="mt-1 text-xs font-medium text-teal-700 dark:text-teal-300">{item.board.name}</p>
                       <time dateTime={item.createdAt} className="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">{timeLabel(item.createdAt)}</time>
-                    </div>
+                    </button>
+                    {!item.readAt && <button type="button" disabled={busy} title="Mark as read" aria-label={`Mark as read: ${item.card?.title || item.board.name}`} onClick={() => inbox.markRead(item._id)} className={iconButton}><Check size={16} aria-hidden="true" /></button>}
                   </li>
                 ))}
               </ul>
@@ -96,7 +121,7 @@ function InboxBell({ token, onOpen }) {
             {!inbox.loading && !inbox.error && inbox.nextCursor && (
               <div className="border-t border-zinc-100 p-3 text-center dark:border-zinc-800">
                 {inbox.moreError && <p role="alert" className="mb-2 text-xs text-red-700 dark:text-red-300">{inbox.moreError}</p>}
-                <button type="button" disabled={inbox.loadingMore} onClick={inbox.loadMore} className="px-3 py-2 text-sm font-semibold text-teal-700 disabled:opacity-50 dark:text-teal-300">{inbox.loadingMore ? 'Loading...' : inbox.moreError ? 'Retry loading more' : 'Load more'}</button>
+                <button type="button" disabled={inbox.loadingMore || busy} onClick={inbox.loadMore} className="px-3 py-2 text-sm font-semibold text-teal-700 disabled:opacity-50 dark:text-teal-300">{inbox.loadingMore ? 'Loading...' : inbox.moreError ? 'Retry loading more' : 'Load more'}</button>
               </div>
             )}
           </div>

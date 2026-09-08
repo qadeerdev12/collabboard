@@ -9,17 +9,22 @@ export function useNotificationInbox(token) {
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [moreError, setMoreError] = useState('')
+  const [pendingRead, setPendingRead] = useState(null)
+  const [actionError, setActionError] = useState('')
+  const writing = useRef(false)
   const generation = useRef(0)
   const paging = useRef(false)
   const invalidate = useCallback(() => { generation.current += 1 }, [])
 
   const refresh = useCallback(async () => {
+    if (writing.current) return
     const id = ++generation.current
     paging.current = false
     setLoading(true)
     setLoadingMore(false)
     setError('')
     setMoreError('')
+    setActionError('')
     // Discard old context on refresh; access may have changed since last open.
     setNotifications([])
     setNextCursor(null)
@@ -39,7 +44,7 @@ export function useNotificationInbox(token) {
   }, [token])
 
   async function loadMore() {
-    if (loading || paging.current || !nextCursor) return
+    if (loading || writing.current || paging.current || !nextCursor) return
     const id = generation.current
     paging.current = true
     setLoadingMore(true)
@@ -60,6 +65,33 @@ export function useNotificationInbox(token) {
     }
   }
 
+  async function markRead(notificationId = null) {
+    if (writing.current || loading) return false
+    writing.current = true
+    const id = ++generation.current
+    paging.current = false
+    setLoadingMore(false)
+    setMoreError('')
+    setPendingRead(notificationId || 'all')
+    setActionError('')
+    try {
+      if (notificationId) await notificationApi.markRead(token, notificationId)
+      else await notificationApi.markAllRead(token)
+      if (id !== generation.current) return false
+      // Re-fetch after the write instead of assuming unreadCount is zero or
+      // decrementing a stale count. This also removes newly inaccessible rows.
+      writing.current = false
+      await refresh()
+      return true
+    } catch (err) {
+      if (id === generation.current) setActionError(err.message)
+      return false
+    } finally {
+      writing.current = false
+      setPendingRead(null)
+    }
+  }
+
   useEffect(() => {
     const timer = setTimeout(refresh, 0)
     return () => { clearTimeout(timer); invalidate() }
@@ -67,5 +99,5 @@ export function useNotificationInbox(token) {
 
   // A newer refresh invalidates older page requests, and cleanup ignores any
   // response arriving after unmount. The keyed bell resets state on user change.
-  return { notifications, unreadCount, nextCursor, loading, loadingMore, error, moreError, refresh, loadMore }
+  return { notifications, unreadCount, nextCursor, loading, loadingMore, error, moreError, pendingRead, actionError, refresh, loadMore, markRead }
 }

@@ -6,8 +6,8 @@ Step 3B connects card creation and assignment changes to it through the shared
 mutation service. Assignments now persist notifications. Step 4A exposes a
 inbox read API. Step 4B adds marking one owned notification as read, and step 4C
 adds marking all visible unread notifications as read. Step 5A adds the frontend
-bell and read-only inbox. Item navigation, read actions, and Socket.IO notification
-delivery are still pending.
+bell and inbox. Step 5B adds item navigation and read actions. Socket.IO notification
+delivery is still pending.
 
 ## Reading the model
 
@@ -540,8 +540,8 @@ the frontend bell, unread badge, and inbox dropdown using these endpoints.
 
 The shared `AppHeader` now includes `NotificationBell` on Projects, My Tasks,
 Activity, and Profile pages. The project board's custom header is not changed in
-this slice. Notification rows are deliberately read-only: opening the dropdown
-does not mark records read, and rows do not navigate yet. Those actions are 5B.
+this slice. At the 5A checkpoint rows were read-only. Opening the dropdown still
+does not mark records read; step 5B below adds explicit read actions and navigation.
 
 ### Follow the frontend code
 
@@ -591,3 +591,63 @@ Run `npm run lint` and `npm run build` from `client`. In the app, assign a task
 to another account, then open that account's bell on a shared-header page to
 verify the real notification appears. Opening it should leave unreadCount unchanged.
 Pause for review and commit before 5B: navigation and mark-as-read controls.
+
+## Step 5B: navigation and read actions
+
+The shared-header inbox now supports three actions:
+
+- Click a notification to mark it read, then open its task or project. Existing
+  read notifications navigate without another PATCH request.
+- Use the check icon to mark one notification read while staying in the inbox.
+- Use Mark all as read for all accessible unread records, including other pages.
+
+### Follow the code
+
+1. `notificationApi.markRead()` and `markAllRead()` call the existing authenticated
+   PATCH endpoints. The client supplies no recipient or read timestamp.
+2. `useNotificationInbox.markRead(id)` locks concurrent read actions, invalidates
+   older page requests, and awaits the PATCH. Omitting the ID selects mark-all.
+3. Once the write succeeds, the hook refreshes page one and the unread count from
+   the server. It does not guess a new count or mark every cached record read.
+   This resets previously loaded pages and lets new arrivals remain unread.
+4. A write failure leaves the existing rows intact and exposes an inline error.
+   Controls become available again so the user can retry or refresh. No navigation
+   follows a failed write. A write may have succeeded despite a lost response;
+   the backend's idempotent endpoints make retrying safe for existing timestamps.
+5. `NotificationBell.openNotification()` waits for read success before navigating
+   to `/boards/:boardId?card=:cardId`. The existing BoardPage logic selects the
+   correct workflow and opens its card detail modal.
+6. Membership notifications and missing-card history navigate to the returned
+   project instead. Missing actors retain the Former member fallback. Project
+   access is enforced again by the destination API if permissions have changed.
+
+### Async behavior
+
+While a write is pending, row actions, mark-all, pagination, and refresh are
+disabled. A ref also blocks duplicate clicks before React renders the disabled
+state. Request generations prevent an older page load from replacing post-write
+data. The component checks whether it is still mounted before navigating after
+an async action, so changing pages or accounts cannot trigger a late redirect.
+
+A successful PATCH followed by a failed refresh is still a successful write.
+The hook shows its normal fetch error and hides an unknown unread count; Retry
+reloads the inbox. An item-opening action can still navigate after that successful
+PATCH. Mark-all never forces the badge to zero because newer records may remain
+unread. Notifications only refresh through REST in this step, not live sockets.
+
+### Review checks
+
+Desktop/mobile checks used temporary sample responses to verify individual read
+updates, global count refresh, new arrivals during mark-all, inline write failures
+without navigation, task deep-link URLs, deleted-task project fallback, membership
+project URLs, and disabled mark-all at zero unread. These checks exercise frontend
+behavior, not a real signed-in end-to-end session. The temporary preview files
+were removed after verification. Backend API behavior is covered by its existing
+integration tests; no backend code changed in this slice.
+
+Run `npm run lint` and `npm run build` from `client`. For the final user review,
+assign a task from a second account, open its notification, and confirm that the
+correct workflow/card opens and the read state persists after reloading.
+
+Stop for review and commit here. Step 6 will add live delivery through personal
+Socket.IO rooms; comment and membership publishers are still future steps.

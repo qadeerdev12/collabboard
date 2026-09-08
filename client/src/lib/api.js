@@ -98,6 +98,10 @@ export const integrationApi = {
 }
 
 export const notificationApi = {
+  markRead: (token, notificationId) =>
+    request(`/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'PATCH', token }),
+  markAllRead: (token) =>
+    request('/notifications/read-all', { method: 'PATCH', token }),
   list: (token, { cursor, limit = 20 } = {}) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set('cursor', cursor);
