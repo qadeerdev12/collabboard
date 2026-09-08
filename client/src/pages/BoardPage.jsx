@@ -7,6 +7,7 @@ import { useToast } from '../context/useToast'
 import { boardApi, integrationApi } from '../lib/api'
 import { useSocket } from '../hooks/useSocket'
 import { useBoardDragAndDrop } from '../hooks/useBoardDragAndDrop'
+import { useLatestRequest } from '../hooks/useLatestRequest'
 import { positionBetween } from '../lib/position'
 import { memberUserId } from '../lib/boardMembers'
 import { githubRetryAt } from '../lib/githubRetry'
@@ -29,6 +30,14 @@ import GitHubIntegrationPanel from '../components/board/GitHubIntegrationPanel'
 export default function BoardPage() {
   const { boardId } = useParams()
   const { user, token } = useAuth()
+  // React otherwise reuses this route's state across project navigation. A fresh
+  // session also isolates drafts, modals, permissions, and socket subscriptions.
+  // Query-only changes (chat/GitHub/card deep links) keep the existing session.
+  return <BoardSession key={`${boardId}:${token}`} boardId={boardId} user={user} token={token} />
+}
+
+function BoardSession({ boardId, user, token }) {
+  const beginRead = useLatestRequest()
   const toast = useToast()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -177,9 +186,11 @@ export default function BoardPage() {
   const typingTimersRef = useRef(new Map())
 
   const loadBoard = useCallback(async ({ keepLoading = false } = {}) => {
+    const isCurrent = beginRead('board')
     try {
       if (!keepLoading) setLoading(true)
       const res = await boardApi.getOne(boardId, token)
+      if (!isCurrent()) return
       const sortedLists = [...res.data.lists].sort((a, b) => a.position - b.position)
       const byList = {}
       for (const l of sortedLists) byList[l._id] = []
@@ -199,11 +210,11 @@ export default function BoardPage() {
       setCardsByList(byList)
       setError('')
     } catch (err) {
-      setError(err.message)
+      if (isCurrent()) setError(err.message)
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
-  }, [boardId, token])
+  }, [beginRead, boardId, token])
 
   useEffect(() => {
     const cardId = searchParams.get('card')
@@ -229,33 +240,38 @@ export default function BoardPage() {
   }, [board?._id, boardId, cardsByList, lists, loading, searchParams, setSearchParams])
 
   const loadActivities = useCallback(async () => {
+    const isCurrent = beginRead('activities')
     try {
       setActivityLoading(true)
       setActivityError('')
       const res = await boardApi.getActivities(boardId, token)
+      if (!isCurrent()) return
       setActivities(res.data.activities || [])
     } catch (err) {
-      setActivityError(err.message)
+      if (isCurrent()) setActivityError(err.message)
     } finally {
-      setActivityLoading(false)
+      if (isCurrent()) setActivityLoading(false)
     }
-  }, [boardId, token])
+  }, [beginRead, boardId, token])
 
   const loadMessages = useCallback(async () => {
+    const isCurrent = beginRead('messages')
     try {
       setMessagesLoading(true)
       setMessagesError('')
       const res = await boardApi.getMessages(boardId, token)
+      if (!isCurrent()) return
       setMessages(res.data.messages || [])
       setMessagesLoaded(true)
     } catch (err) {
-      setMessagesError(err.message)
+      if (isCurrent()) setMessagesError(err.message)
     } finally {
-      setMessagesLoading(false)
+      if (isCurrent()) setMessagesLoading(false)
     }
-  }, [boardId, token])
+  }, [beginRead, boardId, token])
 
   const loadGitHubSummary = useCallback(async () => {
+    const isCurrent = beginRead('github-summary')
     try {
       setGithubLoading(true)
       setGithubError('')
@@ -263,38 +279,44 @@ export default function BoardPage() {
         integrationApi.getGitHubAccount(token),
         boardApi.getGitHubIntegration(boardId, token),
       ])
+      if (!isCurrent()) return
       setGithubAccount(accountRes.data.account)
       setGithubIntegration(integrationRes.data.integration)
     } catch (err) {
-      setGithubError(err.message)
+      if (isCurrent()) setGithubError(err.message)
     } finally {
-      setGithubLoading(false)
+      if (isCurrent()) setGithubLoading(false)
     }
-  }, [boardId, token])
+  }, [beginRead, boardId, token])
 
   const loadGitHubRepos = useCallback(async () => {
     if (Date.now() < githubReposRetryAt) return
+    const isCurrent = beginRead('github-repos')
     try {
       setGithubReposLoading(true)
       setGithubReposError('')
       const res = await integrationApi.listGitHubRepos(token)
+      if (!isCurrent()) return
       setGithubRepos(res.data.repositories || [])
       setGithubReposLoaded(true)
       setGithubReposRetryAt(0)
     } catch (err) {
+      if (!isCurrent()) return
       setGithubReposError(err.message)
       setGithubReposRetryAt(githubRetryAt(err))
     } finally {
-      setGithubReposLoading(false)
+      if (isCurrent()) setGithubReposLoading(false)
     }
-  }, [githubReposRetryAt, token])
+  }, [beginRead, githubReposRetryAt, token])
 
   const loadGitHubCommits = useCallback(async () => {
     if (Date.now() < githubCommitsRetryAt) return
+    const isCurrent = beginRead('github-commits')
     try {
       setGithubCommitsLoading(true)
       setGithubCommitsError('')
       const res = await boardApi.getGitHubCommits(boardId, token)
+      if (!isCurrent()) return
       setGithubCommits(res.data.commits || [])
       setGithubIntegration(res.data.integration)
       const syncedActivities = res.data.activities || []
@@ -302,30 +324,34 @@ export default function BoardPage() {
       setGithubCommitsLoaded(true)
       setGithubCommitsRetryAt(0)
     } catch (err) {
+      if (!isCurrent()) return
       setGithubCommitsError(err.message)
       setGithubCommitsRetryAt(githubRetryAt(err))
     } finally {
-      setGithubCommitsLoading(false)
+      if (isCurrent()) setGithubCommitsLoading(false)
     }
-  }, [boardId, githubCommitsRetryAt, token])
+  }, [beginRead, boardId, githubCommitsRetryAt, token])
 
   const loadGitHubStats = useCallback(async () => {
     if (Date.now() < githubStatsRetryAt) return
+    const isCurrent = beginRead('github-stats')
     try {
       setGithubStatsLoading(true)
       setGithubStatsError('')
       const res = await boardApi.getGitHubStats(boardId, token)
+      if (!isCurrent()) return
       setGithubStats(res.data.stats || null)
       setGithubIntegration(res.data.integration)
       setGithubStatsLoaded(true)
       setGithubStatsRetryAt(0)
     } catch (err) {
+      if (!isCurrent()) return
       setGithubStatsError(err.message)
       setGithubStatsRetryAt(githubRetryAt(err))
     } finally {
-      setGithubStatsLoading(false)
+      if (isCurrent()) setGithubStatsLoading(false)
     }
-  }, [boardId, githubStatsRetryAt, token])
+  }, [beginRead, boardId, githubStatsRetryAt, token])
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -406,30 +432,13 @@ export default function BoardPage() {
   }, [board, chatPanelOpen, loadMessages, messagesLoaded])
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setMessages([])
-      setMessagesLoaded(false)
-      setMessagesLoading(false)
-      setMessagesError('')
-      setUnreadMessages(0)
-      setTypingUsers([])
-      setGithubAccount(null)
-      setGithubIntegration(null)
-      setGithubError('')
-      setGithubRepos([])
-      setGithubReposLoaded(false)
-      setGithubReposError('')
-      setGithubCommits([])
-      setGithubCommitsLoaded(false)
-      setGithubCommitsError('')
-      setGithubStats(null)
-      setGithubStatsLoaded(false)
-      setGithubStatsError('')
-      typingTimersRef.current.forEach((typingTimer) => clearTimeout(typingTimer))
-      typingTimersRef.current.clear()
-    }, 0)
-    return () => clearTimeout(timer)
-  }, [boardId])
+    // The keyed session resets project state; only external timers need cleanup.
+    const timers = typingTimersRef.current
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer))
+      timers.clear()
+    }
+  }, [])
 
   useEffect(() => {
     if (!chatPanelOpen) return undefined

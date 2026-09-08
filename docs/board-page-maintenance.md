@@ -19,6 +19,7 @@ behavior without changing that model, API payloads, permissions, or socket event
 | `components/board/GitHubIntegrationPanel.jsx` | Repository picker, integration/commit/stat views, and local search/picker visibility |
 | `components/board/GitHubMark.jsx` | Existing shared GitHub icon used by the header and panel |
 | `hooks/useBoardDragAndDrop.js` | Drag sensors, collision priority, optimistic movement, persistence, and rollback |
+| `hooks/useLatestRequest.js` | Per-resource read tickets and invalidation on session cleanup |
 | `lib/boardMembers.js` | Normalize raw or populated membership user IDs |
 
 Existing `BoardColumn`, card detail, chat, members, activity, and confirmation
@@ -27,7 +28,7 @@ components remain where they were. Do not move unrelated components into the
 
 ## State and callback boundaries
 
-`BoardPage` remains the single owner of `lists`, `cardsByList`, workflows, selected
+`BoardPage` renders a keyed `BoardSession`, which owns `lists`, `cardsByList`, workflows, selected
 card, and server-backed panel data. The extracted views receive those values and
 callbacks. They do not independently fetch a second copy of project state.
 
@@ -40,6 +41,31 @@ handlers. Backend authorization remains required regardless of hidden buttons.
 The page passes the actual route `boardId` to the header so activity links retain
 the same route behavior. Notification task deep links, query-driven panels, and
 workflow selection continue to be coordinated in the page.
+
+## Project request isolation
+
+The session key includes the route project ID and auth token. Changing either
+unmounts the old session and starts with fresh data, drafts, dialogs, permissions,
+and loading/error flags. An A -> B -> A navigation creates a new A session; an old
+A response cannot become current just because the route ID matches again.
+Query-only changes retain the session, so chat/GitHub panels and task deep links
+do not reset the board or trigger a new connection. Project navigation disconnects
+the old board socket through `useSocket` cleanup. Typing timers are cleared too.
+
+Every board/panel read starts a `useLatestRequest` ticket for its resource.
+Only that resource's newest ticket may apply success, error, or finally/loading
+updates. A reconnect snapshot can therefore supersede an initial snapshot without
+the initial response overwriting it later. Different resources do not invalidate
+one another. Unmount/StrictMode cleanup invalidates all outstanding tickets.
+
+This is response invalidation, not transport cancellation: in-flight HTTP reads
+may finish, but their stale results are ignored. It does not cancel server writes
+or reconcile a snapshot with socket mutations arriving during that same read.
+Keep those concurrency concerns separate from route isolation.
+
+`boardNavigation.test.jsx` exercises delayed success/failure, loading isolation,
+rapid navigation, reconnect overlap, panel reads, account changes, and query-only
+navigation. `latestRequest.test.jsx` checks independent resources and cleanup.
 
 ## Drag-and-drop invariants
 
@@ -104,8 +130,8 @@ An explicit successful read clears that resource's cooldown.
 `boardGitHubRequests.test.jsx` mounts the real page under StrictMode with mocked
 API/socket boundaries to check request counts, failures, manual recovery, cooldowns,
 panel reopening, and repository changes. `githubRetry.test.jsx` covers the API
-metadata, deadline parsing, and timer cleanup. Stale responses across project
-navigation remain a separate audit item; this fix does not claim to address them.
+metadata, deadline parsing, and timer cleanup. Project navigation uses the separate
+session isolation rules above; retry cooldowns remain local to a mounted session.
 
 ## Next sensible extractions
 
