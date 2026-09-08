@@ -9,6 +9,7 @@ import { useSocket } from '../hooks/useSocket'
 import { useBoardDragAndDrop } from '../hooks/useBoardDragAndDrop'
 import { positionBetween } from '../lib/position'
 import { memberUserId } from '../lib/boardMembers'
+import { githubRetryAt } from '../lib/githubRetry'
 import BoardColumn from '../components/BoardColumn'
 import CardDetailModal from '../components/CardDetailModal'
 import NewBoardModal from '../components/NewBoardModal'
@@ -72,15 +73,18 @@ export default function BoardPage() {
   const [githubReposLoaded, setGithubReposLoaded] = useState(false)
   const [githubReposLoading, setGithubReposLoading] = useState(false)
   const [githubReposError, setGithubReposError] = useState('')
+  const [githubReposRetryAt, setGithubReposRetryAt] = useState(0)
   const [githubSaving, setGithubSaving] = useState(false)
   const [githubCommits, setGithubCommits] = useState([])
   const [githubCommitsLoaded, setGithubCommitsLoaded] = useState(false)
   const [githubCommitsLoading, setGithubCommitsLoading] = useState(false)
   const [githubCommitsError, setGithubCommitsError] = useState('')
+  const [githubCommitsRetryAt, setGithubCommitsRetryAt] = useState(0)
   const [githubStats, setGithubStats] = useState(null)
   const [githubStatsLoaded, setGithubStatsLoaded] = useState(false)
   const [githubStatsLoading, setGithubStatsLoading] = useState(false)
   const [githubStatsError, setGithubStatsError] = useState('')
+  const [githubStatsRetryAt, setGithubStatsRetryAt] = useState(0)
   const [cardSearch, setCardSearch] = useState('')
   const [tagFilter, setTagFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -269,20 +273,24 @@ export default function BoardPage() {
   }, [boardId, token])
 
   const loadGitHubRepos = useCallback(async () => {
+    if (Date.now() < githubReposRetryAt) return
     try {
       setGithubReposLoading(true)
       setGithubReposError('')
       const res = await integrationApi.listGitHubRepos(token)
       setGithubRepos(res.data.repositories || [])
       setGithubReposLoaded(true)
+      setGithubReposRetryAt(0)
     } catch (err) {
       setGithubReposError(err.message)
+      setGithubReposRetryAt(githubRetryAt(err))
     } finally {
       setGithubReposLoading(false)
     }
-  }, [token])
+  }, [githubReposRetryAt, token])
 
   const loadGitHubCommits = useCallback(async () => {
+    if (Date.now() < githubCommitsRetryAt) return
     try {
       setGithubCommitsLoading(true)
       setGithubCommitsError('')
@@ -292,14 +300,17 @@ export default function BoardPage() {
       const syncedActivities = res.data.activities || []
       syncedActivities.forEach((activity) => prependActivity(activity))
       setGithubCommitsLoaded(true)
+      setGithubCommitsRetryAt(0)
     } catch (err) {
       setGithubCommitsError(err.message)
+      setGithubCommitsRetryAt(githubRetryAt(err))
     } finally {
       setGithubCommitsLoading(false)
     }
-  }, [boardId, token])
+  }, [boardId, githubCommitsRetryAt, token])
 
   const loadGitHubStats = useCallback(async () => {
+    if (Date.now() < githubStatsRetryAt) return
     try {
       setGithubStatsLoading(true)
       setGithubStatsError('')
@@ -307,12 +318,14 @@ export default function BoardPage() {
       setGithubStats(res.data.stats || null)
       setGithubIntegration(res.data.integration)
       setGithubStatsLoaded(true)
+      setGithubStatsRetryAt(0)
     } catch (err) {
       setGithubStatsError(err.message)
+      setGithubStatsRetryAt(githubRetryAt(err))
     } finally {
       setGithubStatsLoading(false)
     }
-  }, [boardId, token])
+  }, [boardId, githubStatsRetryAt, token])
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -359,28 +372,30 @@ export default function BoardPage() {
   }, [board, loadGitHubSummary])
 
   useEffect(() => {
-    if (!githubPanelOpen || !githubAccount || !canEditBoard || githubReposLoaded || githubReposLoading) return undefined
+    // A failed initial read waits for an explicit retry, including after closing
+    // the panel. Loading=false alone must not restart a rejected request.
+    if (!githubPanelOpen || !githubAccount || !canEditBoard || githubReposLoaded || githubReposLoading || githubReposError) return undefined
     const timer = setTimeout(() => {
       loadGitHubRepos()
     }, 0)
     return () => clearTimeout(timer)
-  }, [canEditBoard, githubAccount, githubPanelOpen, githubReposLoaded, githubReposLoading, loadGitHubRepos])
+  }, [canEditBoard, githubAccount, githubPanelOpen, githubReposError, githubReposLoaded, githubReposLoading, loadGitHubRepos])
 
   useEffect(() => {
-    if (!githubPanelOpen || !githubIntegration || githubCommitsLoaded || githubCommitsLoading) return undefined
+    if (!githubPanelOpen || !githubIntegration || githubCommitsLoaded || githubCommitsLoading || githubCommitsError) return undefined
     const timer = setTimeout(() => {
       loadGitHubCommits()
     }, 0)
     return () => clearTimeout(timer)
-  }, [githubCommitsLoaded, githubCommitsLoading, githubIntegration, githubPanelOpen, loadGitHubCommits])
+  }, [githubCommitsError, githubCommitsLoaded, githubCommitsLoading, githubIntegration, githubPanelOpen, loadGitHubCommits])
 
   useEffect(() => {
-    if (!githubPanelOpen || !githubIntegration || githubStatsLoaded || githubStatsLoading) return undefined
+    if (!githubPanelOpen || !githubIntegration || githubStatsLoaded || githubStatsLoading || githubStatsError) return undefined
     const timer = setTimeout(() => {
       loadGitHubStats()
     }, 0)
     return () => clearTimeout(timer)
-  }, [githubIntegration, githubPanelOpen, githubStatsLoaded, githubStatsLoading, loadGitHubStats])
+  }, [githubIntegration, githubPanelOpen, githubStatsError, githubStatsLoaded, githubStatsLoading, loadGitHubStats])
 
   useEffect(() => {
     if (!board || !chatPanelOpen || messagesLoaded) return undefined
@@ -1349,15 +1364,18 @@ export default function BoardPage() {
           reposLoading={githubReposLoading}
           reposError={githubReposError}
           reposLoaded={githubReposLoaded}
+          reposRetryAt={githubReposRetryAt}
           saving={githubSaving}
           commits={githubCommits}
           commitsLoading={githubCommitsLoading}
           commitsError={githubCommitsError}
           commitsLoaded={githubCommitsLoaded}
+          commitsRetryAt={githubCommitsRetryAt}
           stats={githubStats}
           statsLoading={githubStatsLoading}
           statsError={githubStatsError}
           statsLoaded={githubStatsLoaded}
+          statsRetryAt={githubStatsRetryAt}
           canEdit={canEditBoard}
           onClose={closeGitHubPanel}
           onRefreshRepos={handleRefreshGitHubRepos}

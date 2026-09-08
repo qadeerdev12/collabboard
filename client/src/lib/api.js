@@ -29,7 +29,13 @@ async function request(endpoint, {method = 'GET', body, token } = {}) {
     // Our Server returns {error: {code, message}} with a non-2xx status on failure.
     if (!res.ok) {
         // Surface the server's message so the UI can show it.
-        throw new Error(data?.error?.message || `Request failed with status ${res.status}`);
+        const error = new Error(data?.error?.message || `Request failed with status ${res.status}`);
+        // Keep retry metadata available without changing existing message-based callers.
+        error.status = res.status;
+        error.code = data?.error?.code;
+        error.retryAfter = data?.error?.retryAfter;
+        error.resetAt = data?.error?.resetAt;
+        throw error;
     }
 
     return data;

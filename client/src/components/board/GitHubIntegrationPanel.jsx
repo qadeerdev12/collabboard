@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import GitHubMark from './GitHubMark'
+import { useRetryCooldown } from '../../hooks/useRetryCooldown'
 
 // Repository data and mutations stay with the page; only picker UI state lives here.
 export default function GitHubIntegrationPanel({
@@ -13,15 +14,18 @@ export default function GitHubIntegrationPanel({
   reposLoading,
   reposError,
   reposLoaded,
+  reposRetryAt = 0,
   saving,
   commits,
   commitsLoading,
   commitsError,
   commitsLoaded,
+  commitsRetryAt = 0,
   stats,
   statsLoading,
   statsError,
   statsLoaded,
+  statsRetryAt = 0,
   canEdit,
   onClose,
   onRefreshRepos,
@@ -32,6 +36,9 @@ export default function GitHubIntegrationPanel({
 }) {
   const [search, setSearch] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false)
+  const reposCoolingDown = useRetryCooldown(reposRetryAt)
+  const commitsCoolingDown = useRetryCooldown(commitsRetryAt)
+  const statsCoolingDown = useRetryCooldown(statsRetryAt)
   const showPicker = !integration || pickerOpen
   const filteredRepos = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -175,14 +182,15 @@ export default function GitHubIntegrationPanel({
                     <button
                       type="button"
                       onClick={onRefreshStats}
-                      disabled={statsLoading}
+                      disabled={statsLoading || statsCoolingDown}
                       className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-800"
                     >
-                      {statsLoading ? 'Refreshing...' : statsLoaded ? 'Refresh' : 'Load'}
+                      {statsLoading ? 'Refreshing...' : statsError ? 'Retry' : statsLoaded ? 'Refresh' : 'Load'}
                     </button>
                   </div>
 
                   {statsError && <PanelMessage tone="error" title="Could not load repository pulse" text={statsError} />}
+                  {statsCoolingDown && <RetryNotice retryAt={statsRetryAt} />}
 
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <GitHubStatCard
@@ -209,14 +217,15 @@ export default function GitHubIntegrationPanel({
                     <button
                       type="button"
                       onClick={onRefreshCommits}
-                      disabled={commitsLoading}
+                      disabled={commitsLoading || commitsCoolingDown}
                       className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-800"
                     >
-                      {commitsLoading ? 'Refreshing...' : commitsLoaded ? 'Refresh' : 'Load'}
+                      {commitsLoading ? 'Refreshing...' : commitsError ? 'Retry' : commitsLoaded ? 'Refresh' : 'Load'}
                     </button>
                   </div>
 
                   {commitsError && <PanelMessage tone="error" title="Could not load commits" text={commitsError} />}
+                  {commitsCoolingDown && <RetryNotice retryAt={commitsRetryAt} />}
 
                   <div className="mt-3 space-y-2">
                     {commitsLoading && Array.from({ length: 4 }).map((_, index) => (
@@ -274,10 +283,10 @@ export default function GitHubIntegrationPanel({
                     <button
                       type="button"
                       onClick={onRefreshRepos}
-                      disabled={reposLoading}
+                      disabled={reposLoading || reposCoolingDown}
                       className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 px-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-800"
                     >
-                      {reposLoading ? 'Refreshing...' : reposLoaded ? 'Refresh' : 'Load repos'}
+                      {reposLoading ? 'Refreshing...' : reposError ? 'Retry' : reposLoaded ? 'Refresh' : 'Load repos'}
                     </button>
                   </div>
 
@@ -292,6 +301,7 @@ export default function GitHubIntegrationPanel({
                   </label>
 
                   {reposError && <PanelMessage tone="error" title="Could not load repositories" text={reposError} />}
+                  {reposCoolingDown && <RetryNotice retryAt={reposRetryAt} />}
 
                   <div className="mt-3 space-y-2">
                     {reposLoading && Array.from({ length: 4 }).map((_, index) => (
@@ -341,6 +351,14 @@ export default function GitHubIntegrationPanel({
         </div>
       </aside>
     </div>
+  )
+}
+
+function RetryNotice({ retryAt }) {
+  return (
+    <p role="status" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+      GitHub paused requests. Retry available after {new Date(retryAt).toLocaleTimeString()}.
+    </p>
   )
 }
 

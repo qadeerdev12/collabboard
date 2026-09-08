@@ -85,6 +85,28 @@ layout with the pre-refactor page. The temporary browser harness is not committe
 GitHub network operations are covered with controlled component responses and the
 existing server tests, not by changing a real GitHub repository connection.
 
+## GitHub retry behavior
+
+Repository, commit, and statistics auto-load effects stop when their error state
+is set. Do not remove those guards: clearing `loading` after a failed request
+otherwise immediately triggers another read. Ordinary failures require an explicit
+Retry click; closing/reopening the panel does not retry them. Linking a different
+repository clears the old commit/stat errors so its data can load normally.
+
+The API wrapper retains `status`, `code`, `retryAfter`, and `resetAt` on errors.
+`lib/githubRetry.js` converts GitHub rate limits into per-resource deadlines using
+the later of Retry-After seconds and the reset timestamp. Missing or unusable
+deadlines fall back to a one-minute pause. Deadlines stay in the page across panel
+close/reopen; both loaders and buttons respect them. `useRetryCooldown` only wakes
+the button at expiry, never schedules a request, and cleans up its timer on unmount.
+An explicit successful read clears that resource's cooldown.
+
+`boardGitHubRequests.test.jsx` mounts the real page under StrictMode with mocked
+API/socket boundaries to check request counts, failures, manual recovery, cooldowns,
+panel reopening, and repository changes. `githubRetry.test.jsx` covers the API
+metadata, deadline parsing, and timer cleanup. Stale responses across project
+navigation remain a separate audit item; this fix does not claim to address them.
+
 ## Next sensible extractions
 
 The page is smaller, but it deliberately still coordinates the tightly coupled
