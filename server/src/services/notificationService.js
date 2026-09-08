@@ -37,6 +37,6 @@ export async function createNotification({ recipientId, actorId, type, boardId, 
   }
 
   // readAt defaults to null; save supplies timestamps and persists the document.
-  // No socket delivery happens here. The subscriber returns this result to the bus.
+  // No socket delivery happens here. The subscriber signals only after this saves.
   return notification.save();
 }

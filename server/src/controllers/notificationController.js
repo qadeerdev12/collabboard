@@ -1,4 +1,5 @@
 import { listNotifications, markNotificationRead, markAllNotificationsRead } from '../services/notificationInboxService.js';
+import { emitInboxChanged } from '../services/notificationDeliveryService.js';
 
 export async function getNotifications(req, res) {
   try {
@@ -27,6 +28,8 @@ export async function readNotification(req, res) {
       recipientId: req.user._id,
       notificationId: req.params.notificationId,
     });
+    // Re-signal even an idempotent success so this user's other tabs can catch up.
+    emitInboxChanged(req.app.get('io'), req.user._id);
     res.set('Cache-Control', 'no-store');
     return res.json({ data: { notification } });
   } catch (err) {
@@ -42,6 +45,7 @@ export async function readNotification(req, res) {
 export async function readAllNotifications(req, res) {
   try {
     const data = await markAllNotificationsRead({ recipientId: req.user._id });
+    if (data.modifiedCount > 0) emitInboxChanged(req.app.get('io'), req.user._id);
     res.set('Cache-Control', 'no-store');
     return res.json({ data });
   } catch (err) {

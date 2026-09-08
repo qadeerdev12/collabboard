@@ -14,6 +14,7 @@ import {
 } from './services/boardMutationService.js';
 import { recordActivity } from './services/activityService.js';
 import { clearBoardMessages, createBoardMessage, deleteBoardMessage } from './services/chatService.js';
+import { userRoomName } from './services/notificationDeliveryService.js';
 
 const presenceByBoard = new Map();
 const presenceTimers = new Map();
@@ -206,6 +207,10 @@ export function configureSockets(io) {
   });
 
   io.on('connection', (socket) => {
+    // Identity comes from the verified JWT, never a client-selected room/user ID.
+    // All of this user's tabs join automatically, even outside a project page.
+    socket.join(userRoomName(socket.data.user._id));
+
     // Joining is explicit because connection auth proves identity only. The
     // board room still needs membership verification for that specific board.
     socket.on('board:join', async ({ boardId } = {}, callback) => {

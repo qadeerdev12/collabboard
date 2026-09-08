@@ -6,8 +6,9 @@ Step 3B connects card creation and assignment changes to it through the shared
 mutation service. Assignments now persist notifications. Step 4A exposes a
 inbox read API. Step 4B adds marking one owned notification as read, and step 4C
 adds marking all visible unread notifications as read. Step 5A adds the frontend
-bell and inbox. Step 5B adds item navigation and read actions. Socket.IO notification
-delivery is still pending.
+bell and inbox. Step 5B adds item navigation and read actions. Step 6A adds private
+Socket.IO inbox-change signals on the server. The frontend does not consume those
+signals yet; live refresh and reconnect handling belong to step 6B.
 
 ## Reading the model
 
@@ -204,7 +205,7 @@ distinguishes new assignments from unchanged or removed assignments.
 ### Guarantees and limits
 
 - The bus exists only in one running Node process; it does not reach other server
-  instances or the browser. Socket.IO delivery comes in a later step.
+  instances or the browser. Step 6A below adds a separate Socket.IO delivery path.
 - There is no durable queue, replay, retry, or event deduplication. An event with
   no current subscribers returns an empty result array and is not retained.
 - A crash before notification persistence can lose the notification. Database
@@ -651,3 +652,109 @@ correct workflow/card opens and the read state persists after reloading.
 
 Stop for review and commit here. Step 6 will add live delivery through personal
 Socket.IO rooms; comment and membership publishers are still future steps.
+
+## Step 6A: private server-side live delivery
+
+This slice connects persisted notifications to Socket.IO. It does not change the
+bell or create a frontend socket connection. There are two different event paths:
+
+```text
+Authorized REST/socket card assignment
+  -> save card
+  -> appEvents.publish('card.assigned', saved assignment facts)
+  -> notification subscriber
+  -> createNotification() validates eligibility and saves to MongoDB
+  -> io.to('user:<saved recipient ID>').emit('notifications:changed', {})
+
+Authenticated PATCH /notifications/:id/read or /notifications/read-all
+  -> inbox service checks ownership/project access and writes readAt
+  -> io.to('user:<authenticated user ID>').emit('notifications:changed', {})
+```
+
+`appEvents` is internal pub/sub between server modules. Socket.IO is the network
+transport to connected clients. The event names and payloads are intentionally
+different: internal assignment facts must not be forwarded to browsers.
+
+### Follow the code
+
+1. `socket.js` verifies the JWT and loads the user before the `connection` handler
+   runs. That handler calls `socket.join(userRoomName(socket.data.user._id))`.
+   Every authenticated connection joins its personal room automatically, without
+   `board:join`. This also works for multiple tabs/devices for the same account.
+2. `notificationDeliveryService.js` owns the room-name convention and the small
+   `emitInboxChanged(io, recipientId)` helper. `io.to(room).emit(...)` includes all
+   connected sockets in that room; it does not exclude the initiating tab.
+3. `index.js` injects the real Socket.IO server when registering the subscriber:
+   `registerNotificationSubscriber(appEvents, { io })`. Registration remains
+   idempotent per bus and cleanup still runs when the HTTP server closes. The
+   first registration owns that bus's options; it is not reconfigured by calling
+   registration a second time. HTTP-only tests may omit `io`.
+4. `notificationSubscriber.js` awaits `createNotification()`. A saved document
+   triggers the helper using that document's recipient. A `null` eligibility skip
+   or a rejected save sends nothing. The creation service stays transport-free.
+5. `notificationController.js` signals after a successful read service call, using
+   `req.user._id`. A repeated single-item read signals again without changing its
+   original timestamp. Mark-all signals only when `modifiedCount > 0`. Validation,
+   access, and database failures do not send a success signal.
+
+### Socket contract and access boundaries
+
+| Property | Contract |
+| --- | --- |
+| Direction | Server to client only |
+| Event | `notifications:changed` |
+| Payload | `{}` |
+| Destination | `user:<authenticated recipient ID>` |
+| Meaning | Cached inbox data may be stale; fetch it again |
+| Read API | `GET /api/v1/notifications` with the client's own JWT |
+
+No public `user:join` handler exists. Clients cannot select a recipient using
+handshake fields, a socket event, or a PATCH body. Knowing a user ID is not
+authorization. Board membership does not grant access to another user's room.
+Socket.IO automatically removes disconnected sockets from their rooms; a new
+connection authenticates and joins again.
+
+The signal contains no notification ID, task title, actor, project details, or
+unread count. The inbox API still filters by authenticated recipient and current
+project membership. Even if access changes between saving and signaling, the
+subsequent API request enforces current access before returning private content.
+
+### Delivery limits and the next frontend slice
+
+- Persistence remains the source of truth. Offline clients miss signals, not
+  already-saved inbox records. Step 6B must fetch on connect/reconnect as well as
+  on `notifications:changed`; Socket.IO does not replay these missed signals.
+- No delivery acknowledgement, durable queue, retry, or exactly-once guarantee is
+  added. The internal bus and default room adapter still run in one server process.
+- Transport errors are logged and do not reverse a completed database write or
+  turn a successful read PATCH into a 500. Notification-save failures still use
+  the existing event bus error handling and do not fail a saved card assignment.
+- An inbox-change signal is not one new notification. A read action can emit it,
+  and repeated reads can emit it again. The client must refresh, not increment or
+  decrement counts based on the event.
+- The existing frontend still refreshes through its REST actions only. Step 6B
+  will add an account-scoped listener and handle overlapping refresh/read requests
+  without dropping changes or showing a connection toast.
+
+### Tests and review checkpoint
+
+`notificationSubscriber.test.js` proves that a pending save sends nothing, delivery
+uses the stored recipient after the save resolves, skips/failures send nothing,
+and transport errors preserve the saved result.
+
+`notificationDelivery.test.js` uses a real Socket.IO server, multiple clients, and
+an isolated MongoDB. It covers JWT rejection, spoofed identity fields, private-room
+isolation, REST/socket assignments, multiple recipient tabs, read synchronization,
+idempotent/no-op behavior, and write/transport failures. Ordered acknowledgement
+sentinels in the test harness verify non-delivery without arbitrary sleep timers.
+Existing inbox tests also exercise the HTTP-only path with no Socket.IO server.
+
+Run from `server`:
+
+```sh
+npm test -- src/__tests__/notificationSubscriber.test.js src/__tests__/notificationDelivery.test.js src/__tests__/notificationInbox.test.js
+npm test
+```
+
+Stop for review and commit here. Step 6B connects the frontend bell to this signal;
+comment and membership publishers remain separate future iterations.

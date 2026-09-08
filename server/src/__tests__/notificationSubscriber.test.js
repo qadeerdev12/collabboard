@@ -4,18 +4,23 @@ import { registerNotificationSubscriber } from '../events/notificationSubscriber
 import { createNotification } from '../services/notificationService.js';
 
 // Service persistence has its own database tests. These tests isolate the
-// subscriber's payload mapping, registration lifecycle, and failure handling.
+// subscriber's payload mapping, persist-before-signal order, and lifecycle.
 vi.mock('../services/notificationService.js', () => ({ createNotification: vi.fn() }));
 
 afterEach(() => { vi.restoreAllMocks(); vi.mocked(createNotification).mockReset(); });
 
 const assignment = { actorId: 'actor', assigneeId: 'recipient', boardId: 'board', cardId: 'card' };
 
+function socketServer() {
+  const emit = vi.fn();
+  return { emit, to: vi.fn(() => ({ emit })) };
+}
+
 describe('notification subscriber', () => {
   it('maps an assignment event to the creation service and returns its result', async () => {
     const bus = createEventBus();
     registerNotificationSubscriber(bus);
-    const saved = { _id: 'notification', readAt: null };
+    const saved = { _id: 'notification', recipient: 'recipient', readAt: null };
     vi.mocked(createNotification).mockResolvedValue(saved);
     expect(await bus.publish(EVENTS.CARD_ASSIGNED, assignment)).toEqual([{ status: 'fulfilled', value: saved }]);
     expect(createNotification).toHaveBeenCalledExactlyOnceWith({
@@ -40,18 +45,52 @@ describe('notification subscriber', () => {
 
   it('preserves an intentional service skip as a fulfilled null result', async () => {
     const bus = createEventBus();
-    registerNotificationSubscriber(bus);
+    const io = socketServer();
+    registerNotificationSubscriber(bus, { io });
     vi.mocked(createNotification).mockResolvedValue(null);
     expect(await bus.publish(EVENTS.CARD_ASSIGNED, assignment)).toEqual([{ status: 'fulfilled', value: null }]);
+    expect(io.to).not.toHaveBeenCalled();
   });
 
   it('reports a failed service call without rejecting publication', async () => {
     const bus = createEventBus();
-    registerNotificationSubscriber(bus);
+    const io = socketServer();
+    registerNotificationSubscriber(bus, { io });
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const failure = new Error('Save failed');
     vi.mocked(createNotification).mockRejectedValue(failure);
     expect(await bus.publish(EVENTS.CARD_ASSIGNED, assignment)).toEqual([{ status: 'rejected', reason: failure }]);
     expect(log).toHaveBeenCalledWith('Subscriber failed for card.assigned:', 'Save failed');
+    expect(io.to).not.toHaveBeenCalled();
+  });
+
+  it('signals only after persistence resolves, using the saved recipient and no private payload', async () => {
+    const bus = createEventBus();
+    const io = socketServer();
+    registerNotificationSubscriber(bus, { io });
+    let finishSave;
+    vi.mocked(createNotification).mockReturnValue(new Promise((resolve) => { finishSave = resolve; }));
+    const publication = bus.publish(EVENTS.CARD_ASSIGNED, assignment);
+    await Promise.resolve(); // Let the async subscriber start its pending save.
+    expect(createNotification).toHaveBeenCalledOnce();
+    expect(io.to).not.toHaveBeenCalled();
+
+    const saved = { _id: 'notification', recipient: 'saved-recipient' };
+    finishSave(saved);
+    expect(await publication).toEqual([{ status: 'fulfilled', value: saved }]);
+    expect(io.to).toHaveBeenCalledExactlyOnceWith('user:saved-recipient');
+    expect(io.emit).toHaveBeenCalledExactlyOnceWith('notifications:changed', {});
+  });
+
+  it('keeps the saved result when live delivery throws', async () => {
+    const bus = createEventBus();
+    const io = socketServer();
+    registerNotificationSubscriber(bus, { io });
+    const saved = { _id: 'notification', recipient: 'recipient' };
+    vi.mocked(createNotification).mockResolvedValue(saved);
+    io.emit.mockImplementation(() => { throw new Error('Transport unavailable'); });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await bus.publish(EVENTS.CARD_ASSIGNED, assignment)).toEqual([{ status: 'fulfilled', value: saved }]);
+    expect(log).toHaveBeenCalledExactlyOnceWith('Notification live delivery failed:', 'Transport unavailable');
   });
 });

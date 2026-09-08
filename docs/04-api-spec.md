@@ -269,7 +269,13 @@ io(SERVER_URL, { auth: { token } });
 Server middleware verifies the token on `connection`; invalid tokens are rejected before any events are processed.
 
 ### 3.2 Rooms
-A client joins one room per open board: `board:<boardId>`. Membership + role are verified on join.
+A client explicitly joins `board:<boardId>` for an open board. Membership is
+verified on join; mutations additionally verify the caller's role.
+
+Every authenticated socket also automatically joins `user:<userId>`, using the
+user loaded by JWT middleware. There is no client-selectable personal-room join
+event. This room carries private inbox invalidation signals, independently of
+board subscriptions, and includes all connected tabs/devices for that user.
 
 ### 3.3 Client → Server events
 Each emits with an **ack callback** so the client knows the result.
@@ -331,6 +337,29 @@ Errors use:
 - Socket mutation broadcasts exclude the originating socket (it already applied the change optimistically).
 - REST-triggered broadcasts, such as `workflow:created` and `members:updated`, do not have an originating socket; clients merge them by id so the requester does not see duplicate data.
 - On any failure, the server NACKs the sender via ack and broadcasts nothing.
+
+### 3.6 Private inbox signals
+
+These have a separate contract from the board broadcasts above:
+
+| Event | Payload | Destination | Meaning |
+|---|---|---|---|
+| `notifications:changed` | `{}` | `user:<recipientId>` | The recipient's cached inbox may be stale |
+
+The assignment subscriber emits after saving an eligible notification. Read
+controllers emit after a successful single read (including idempotent retries)
+or a bulk read that changed at least one record. Failed writes and skipped
+notification creations emit nothing. All of the user's sockets receive the
+signal, including the tab initiating a read; board peers do not receive it.
+
+No private task data or counts travel in this signal. Clients must re-fetch
+`GET /api/v1/notifications`, which checks recipient ownership and current project
+access. Signals are best-effort, not replayed, and have no acknowledgement.
+Transport failure does not fail an already-persisted notification or read action.
+Clients must also fetch on connect/reconnect to recover missed changes.
+
+The backend contract is implemented in step 6A; the frontend listener and reconnect
+refresh are deferred to step 6B. See [the notifications walkthrough](notifications.md#step-6a-private-server-side-live-delivery).
 
 ---
 
