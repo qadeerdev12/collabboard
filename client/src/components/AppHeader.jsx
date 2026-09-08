@@ -60,6 +60,12 @@ export default function AppHeader() {
             Projects
           </NavLink>
           <NavLink
+            to="/my-tasks"
+            className={({ isActive }) => `rounded-md px-3 py-1.5 font-medium ${isActive ? 'bg-zinc-950 text-white dark:bg-white dark:text-zinc-950' : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'}`}
+          >
+            My Tasks
+          </NavLink>
+          <NavLink
             to="/activity"
             className={({ isActive }) => `rounded-md px-3 py-1.5 font-medium ${isActive ? 'bg-zinc-950 text-white dark:bg-white dark:text-zinc-950' : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'}`}
           >
@@ -113,6 +119,13 @@ export default function AppHeader() {
                   <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{user?.email}</p>
                 </div>
                 <div className="border-b border-zinc-100 dark:border-zinc-800 md:hidden">
+                  <button
+                    role="menuitem"
+                    onClick={() => { setOpen(false); navigate('/my-tasks') }}
+                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  >
+                    My Tasks
+                  </button>
                   <button
                     role="menuitem"
                     onClick={() => {

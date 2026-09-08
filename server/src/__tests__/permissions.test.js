@@ -21,6 +21,38 @@ import BoardGitHubIntegration from '../models/BoardGitHubIntegration.js';
 
 let mongo;
 
+describe('My Tasks access', () => {
+  it('returns only the authenticated assignee\'s tasks in current projects with navigation context', async () => {
+    const app = createApp();
+    const owner = await register(app, 'Owner', 'tasks-owner@example.com');
+    const member = await register(app, 'Member', 'tasks-member@example.com');
+    const board = await createBoardWithOwner(app, owner.token);
+    const privateBoard = await createBoardWithOwner(app, owner.token, 'Private');
+    await addMember(app, owner.token, board._id, member.user.email);
+    const list = await createListForBoard(app, owner.token, board._id);
+    const privateList = await createListForBoard(app, owner.token, privateBoard._id);
+    const workflow = await Workflow.findOne({ board: board._id });
+    await Card.create([
+      { board: board._id, workflow: workflow._id, list: list._id, title: 'Assigned open', assignee: member.user.id, position: 1000 },
+      { board: board._id, workflow: workflow._id, list: list._id, title: 'Assigned done', assignee: member.user.id, status: 'Done', position: 2000 },
+      { board: board._id, list: list._id, title: 'Someone else', assignee: owner.user.id, position: 3000 },
+      { board: board._id, list: list._id, title: 'Unassigned', position: 4000 },
+      // Simulate an old assignment that survived removal from a project.
+      { board: privateBoard._id, list: privateList._id, title: 'Inaccessible', assignee: member.user.id, position: 1000 },
+    ]);
+    await request(app).get('/api/v1/tasks/mine').expect(401);
+    const res = await request(app).get(`/api/v1/tasks/mine?assignee=${owner.user.id}`)
+      .set('Authorization', `Bearer ${member.token}`).expect(200);
+    expect(res.body.data.tasks.map((task) => task.title).sort()).toEqual(['Assigned done', 'Assigned open']);
+    expect(res.body.data.tasks[0].board.name).toBe('Roadmap');
+    expect(res.body.data.tasks[0].workflow.name).toBe(workflow.name);
+    expect(res.body.data.tasks[0].list.title).toBe('Backlog');
+    await Board.updateOne({ _id: board._id }, { $pull: { members: { user: member.user.id } } });
+    const removed = await request(app).get('/api/v1/tasks/mine').set('Authorization', `Bearer ${member.token}`).expect(200);
+    expect(removed.body.data.tasks).toEqual([]);
+  });
+});
+
 describe('card checklists', () => {
   async function fixture(app) {
     const owner = await register(app, 'Owner', 'check-owner@example.com');

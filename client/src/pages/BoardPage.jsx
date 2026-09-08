@@ -1156,6 +1156,29 @@ export default function BoardPage() {
     }
   }, [boardId, token])
 
+  useEffect(() => {
+    const cardId = searchParams.get('card')
+    if (!cardId || loading || board?._id !== boardId) return undefined
+    // Consume the deep link once after the project loads. Clearing the query
+    // prevents later socket updates from reopening a dismissed detail modal.
+    const timer = setTimeout(() => {
+      const target = Object.values(cardsByList).flat().find((card) => card._id === cardId)
+      if (target) {
+        const workflowId = target.workflow || lists.find((list) => list._id === target.list)?.workflow
+        if (workflowId) setActiveWorkflowId(workflowId)
+        setSelectedCard(target)
+      } else {
+        setError('This task is no longer available in this project.')
+      }
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current)
+        next.delete('card')
+        return next
+      }, { replace: true })
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [board?._id, boardId, cardsByList, lists, loading, searchParams, setSearchParams])
+
   const loadActivities = useCallback(async () => {
     try {
       setActivityLoading(true)

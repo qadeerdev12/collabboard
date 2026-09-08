@@ -38,6 +38,14 @@ the board — over WebSockets, in that order.
 
 ## Features
 
+### My Tasks
+
+A personal task view brings together cards assigned to you across your projects.
+Open work is grouped into Overdue, Today, Upcoming, and No due date, with completed
+tasks kept separately. Search and project filters help narrow the list; selecting
+a task opens its details in the correct project workflow. Checklist progress is
+visible alongside each task. See [My Tasks documentation](docs/my-tasks.md).
+
 ### Projects contain workflows, workflows contain tasks
 
 Projects carry a name, one of ten engineering icons, and a colour, so a

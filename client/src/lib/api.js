@@ -97,6 +97,10 @@ export const integrationApi = {
     request('/integrations/github/account', { method: 'DELETE', token }),
 }
 
+export const taskApi = {
+  mine: (token) => request('/tasks/mine', { token }),
+}
+
 export const boardApi = {
   listTemplates: (token) =>
     request('/workflow-templates', { token }),
