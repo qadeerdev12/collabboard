@@ -376,6 +376,12 @@ Board regression tests also cover drag/drop ordering and rollback, empty-list
 drops, workflow forms, filters, permission-gated header actions, and the GitHub
 repository panel.
 
+Dashboard loading tests cover independently settling project/GitHub requests,
+partial failures, and stale responses after a login-session change. Keep these
+reads concurrent but apply each result and loading state separately: optional
+GitHub data must never delay project access. The effect cleanup ignores stale
+responses; it does not cancel requests already sent to the server.
+
 ---
 
 ## Project structure

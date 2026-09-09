@@ -37,35 +37,43 @@ export default function DashboardPage() {
   const [boardDeleting, setBoardDeleting] = useState(false)
 
   useEffect(() => {
-    async function loadDashboard() {
+    let active = true
+
+    // Each section settles independently; GitHub latency must not block projects.
+    async function loadBoards() {
       setLoading(true)
-      setGithubLoading(true)
       setError('')
-      setGithubError('')
+      setBoards([])
       try {
-        const [boardsResult, githubResult] = await Promise.allSettled([
-          boardApi.list(token),
-          integrationApi.getGitHubDashboard(token),
-        ])
-
-        if (boardsResult.status === 'fulfilled') {
-          setBoards(boardsResult.value.data.boards)
-        } else {
-          setError(boardsResult.reason.message)
-        }
-
-        if (githubResult.status === 'fulfilled') {
-          setGithubDashboard(githubResult.value.data)
-        } else {
-          setGithubError(githubResult.reason.message)
-        }
+        const response = await boardApi.list(token)
+        if (active) setBoards(response.data.boards)
+      } catch (err) {
+        if (active) setError(err.message)
       } finally {
-        setLoading(false)
-        setGithubLoading(false)
+        if (active) setLoading(false)
       }
-
     }
-    loadDashboard()
+
+    async function loadGitHubDashboard() {
+      setGithubLoading(true)
+      setGithubError('')
+      setGithubDashboard(null)
+      try {
+        const response = await integrationApi.getGitHubDashboard(token)
+        if (active) setGithubDashboard(response.data)
+      } catch (err) {
+        if (active) setGithubError(err.message)
+      } finally {
+        if (active) setGithubLoading(false)
+      }
+    }
+
+    loadBoards()
+    loadGitHubDashboard()
+    return () => {
+      // Ignore reads from a previous token, unmounted page, or StrictMode setup.
+      active = false
+    }
   }, [token])
 
   const visibleBoards = useMemo(() => {
