@@ -1815,6 +1815,99 @@ describe.sequential('REST board permissions', () => {
   });
 });
 
+describe('project deletion cleanup', () => {
+  const children = [Workflow, List, Card, Comment, Message, BoardGitHubIntegration, Activity, Notification];
+
+  async function seedProject(app, owner, recipient, account, name) {
+    const board = await createBoardWithOwner(app, owner.token, name);
+    await addMember(app, owner.token, board._id, recipient.user.email);
+    const list = await createListForBoard(app, owner.token, board._id);
+    const card = await Card.create({ board: board._id, workflow: list.workflow, list: list._id, title: 'Task', position: 1000 });
+    await Comment.create({ board: board._id, card: card._id, author: owner.user.id, body: 'Comment' });
+    await Message.create({ board: board._id, sender: owner.user.id, body: 'Chat message' });
+    await BoardGitHubIntegration.create({
+      board: board._id, connectedBy: owner.user.id, githubAccount: account._id,
+      repoId: '123', repoOwner: 'owner', repoName: 'repo', repoFullName: 'owner/repo',
+      repoUrl: 'https://github.com/owner/repo',
+    });
+    // Same people participate in both projects. Include every notification type,
+    // multiple recipients, and read/unread history to catch over-broad cleanup.
+    await Notification.create([
+      { board: board._id, actor: owner.user.id, recipient: recipient.user.id, type: 'member.added' },
+      { board: board._id, actor: owner.user.id, recipient: recipient.user.id, type: 'card.assigned', card: card._id },
+      { board: board._id, actor: recipient.user.id, recipient: owner.user.id, type: 'comment.created', card: card._id, readAt: new Date() },
+    ]);
+    return board;
+  }
+
+  it('removes all project records while preserving another project and shared accounts', async () => {
+    const app = createApp();
+    const owner = await register(app, 'Owner', 'owner@example.com');
+    const member = await register(app, 'Member', 'member@example.com');
+    const account = await GitHubAccount.create({ user: owner.user.id, githubId: '123', username: 'owner', accessToken: 'test-token' });
+    const target = await seedProject(app, owner, member, account, 'Delete this');
+    const other = await seedProject(app, owner, member, account, 'Keep this');
+    const snapshots = [];
+    for (const model of children) {
+      expect(await model.countDocuments({ board: target._id })).toBeGreaterThan(0);
+      snapshots.push(await model.find({ board: other._id }).sort({ _id: 1 }).lean());
+    }
+
+    const response = await request(app).delete(`/api/v1/boards/${target._id}`)
+      .set('Authorization', `Bearer ${owner.token}`).expect(200);
+    expect(response.body.data).toEqual({ deleted: true });
+    expect(await Board.findById(target._id)).toBeNull();
+    expect(await Board.findById(other._id)).not.toBeNull();
+    for (const [index, model] of children.entries()) {
+      expect(await model.countDocuments({ board: target._id })).toBe(0);
+      expect(await model.find({ board: other._id }).sort({ _id: 1 }).lean()).toEqual(snapshots[index]);
+    }
+    expect(await User.countDocuments()).toBe(2);
+    expect(await GitHubAccount.findById(account._id)).not.toBeNull();
+    await request(app).delete(`/api/v1/boards/${target._id}`)
+      .set('Authorization', `Bearer ${owner.token}`).expect(404);
+    expect(await Notification.countDocuments({ board: other._id })).toBe(3);
+  });
+
+  it.each(['admin', 'member', 'outsider'])('preserves history when a %s tries to delete a project', async (role) => {
+    const app = createApp();
+    const owner = await register(app, 'Owner', 'owner@example.com');
+    const caller = await register(app, 'Caller', 'caller@example.com');
+    const board = await createBoardWithOwner(app, owner.token);
+    if (role !== 'outsider') await addMember(app, owner.token, board._id, caller.user.email, role);
+    await Activity.create({ board: board._id, actor: owner.user.id, action: 'board.updated', targetType: 'board' });
+    await Notification.create({ board: board._id, actor: owner.user.id, recipient: caller.user.id, type: 'member.added' });
+    const activity = await Activity.find({ board: board._id }).lean();
+    const notifications = await Notification.find({ board: board._id }).lean();
+
+    await request(app).delete(`/api/v1/boards/${board._id}`)
+      .set('Authorization', `Bearer ${caller.token}`).expect(role === 'outsider' ? 404 : 403);
+    expect(await Board.findById(board._id)).not.toBeNull();
+    expect(await Activity.find({ board: board._id }).lean()).toEqual(activity);
+    expect(await Notification.find({ board: board._id }).lean()).toEqual(notifications);
+  });
+
+  it('keeps the project retryable when history cleanup fails', async () => {
+    const app = createApp();
+    const owner = await register(app, 'Owner', 'owner@example.com');
+    const board = await createBoardWithOwner(app, owner.token);
+    await Notification.create({ board: board._id, actor: owner.user.id, recipient: owner.user.id, type: 'member.added' });
+    const failure = vi.spyOn(Notification, 'deleteMany').mockRejectedValueOnce(new Error('Cleanup unavailable'));
+    try {
+      await request(app).delete(`/api/v1/boards/${board._id}`)
+        .set('Authorization', `Bearer ${owner.token}`).expect(500);
+      expect(await Board.findById(board._id)).not.toBeNull();
+      expect(await Notification.countDocuments({ board: board._id })).toBe(1);
+    } finally {
+      failure.mockRestore();
+    }
+    await request(app).delete(`/api/v1/boards/${board._id}`)
+      .set('Authorization', `Bearer ${owner.token}`).expect(200);
+    expect(await Board.findById(board._id)).toBeNull();
+    expect(await Notification.countDocuments({ board: board._id })).toBe(0);
+  });
+});
+
 describe.sequential('Socket.IO board permissions', () => {
   it('rejects invalid JWTs during the handshake', async () => {
     const server = await startSocketServer();

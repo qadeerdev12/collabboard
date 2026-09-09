@@ -6,6 +6,8 @@ import Comment from '../models/Comment.js';
 import Message from '../models/Message.js';
 import Workflow from '../models/Workflow.js';
 import BoardGitHubIntegration from '../models/BoardGitHubIntegration.js';
+import Activity from '../models/Activity.js';
+import Notification from '../models/Notification.js';
 import { getBoardIfMember, getBoardIfRole } from '../utils/boardAccess.js';
 import { recordActivity } from '../services/activityService.js';
 import { backfillBoardWorkItemsToDefaultWorkflow, ensureDefaultWorkflow } from '../services/workflowService.js';
@@ -175,6 +177,10 @@ export async function deleteBoard(req, res) {
     await BoardGitHubIntegration.deleteMany({ board: board._id });
     await Workflow.deleteMany({ board: board._id });
     await List.deleteMany({ board: board._id });
+    // Scope history cleanup by project, not actor/recipient: members may share other projects.
+    // Keep the board until cleanup succeeds so a failed deletion can be retried.
+    await Activity.deleteMany({ board: board._id });
+    await Notification.deleteMany({ board: board._id });
     await Board.deleteOne({ _id: board._id });
 
     return res.status(200).json({ data: { deleted: true } });

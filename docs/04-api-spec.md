@@ -149,6 +149,15 @@ project identity separate from project structure. Older boards are backfilled
 with the default workflow the first time they are loaded, and any legacy
 lists/cards without a workflow are attached to that default.
 
+Project deletion removes its workflows, lists, cards, comments, chat messages,
+repository links, activity, and notifications for all recipients, including read
+notifications. Cleanup is scoped by board ID; shared users, GitHub accounts, and
+other projects are retained. Authorization runs before any deletion. Child records
+are deleted before the board so failures return an error and allow an owner retry.
+This is not transactional: a failure can leave a partially cleared project, and
+concurrent writes are not serialized with deletion. It does not clean up historical
+orphans from earlier deletions or immediately invalidate connected clients' inboxes.
+
 ### 2.5 Workflows
 
 | Method | Path | Min role | Body | Returns |

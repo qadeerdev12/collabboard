@@ -129,10 +129,14 @@ Creation skips users/projects/cards already missing when checked and recipients
 whose membership has already been removed. These queries and the save are **not
 one transaction**: records can change between a check and the write. Therefore
 the future inbox API must check current access and tolerate missing references.
-Already-saved notifications are retained on deletion/removal and may contain
-dangling IDs. Step 4A applies current project access checks and safe handling of
-missing references when reading them. Physical cleanup remains deferred; this
-read endpoint neither deletes notifications nor alters their read state.
+Deleting a project through `DELETE /boards/:boardId` now physically removes its
+notifications for every recipient, along with its activity history. Other removal
+paths and concurrent writes can still leave dangling IDs. Step 4A applies current
+project access checks and safe handling of missing references when reading them;
+the read endpoint neither deletes notifications nor alters their read state.
+See the project deletion contract in [API specification](04-api-spec.md) for retry
+behavior and concurrency limits. Regression tests in `permissions.test.js` cover
+cross-project isolation, owner-only access, and retry after a cleanup failure.
 
 ### Database tests
 
@@ -292,7 +296,8 @@ between them can lose a notification; later reassignments can also make a saved
 notification historical rather than current. Atomic comparison prevents duplicate
 events for concurrent identical assignments, not general exactly-once delivery.
 Retained notifications and deleted references are handled by the read-time policy
-in step 4A. Lifecycle cleanup remains separate work.
+in step 4A. Project deletion also removes persisted notifications; other lifecycle
+cleanup remains separate work.
 
 ### Verification and review checkpoint
 
