@@ -132,6 +132,18 @@ commit SHA so refreshes do not flood the project timeline.
 Repository stats currently include `openPullRequests` and `openIssues`, also
 using the linked repository token.
 
+### AI task drafting
+
+`POST /boards/:boardId/cards/:cardId/draft` accepts `{ title, brief }` and returns
+`{ data: { draft: { description, tag, checklist: string[] } } }`. Owner, admin,
+and member roles are allowed only for a card belonging to that project.
+Generation is read-only and responses are `Cache-Control: no-store`.
+Validation failures return 400; missing/inaccessible cards return 404;
+request limits return 429 with `Retry-After: 60`; missing AI configuration returns
+503; provider/output failures return 502; timeout returns 504.
+See [AI task drafting](ai-task-drafting.md) for configuration, review/apply semantics,
+limits, and provider data boundaries.
+
 ### Workspace activity
 
 `GET /api/v1/activities?limit=50&cursor=...` requires authentication and returns

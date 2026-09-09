@@ -4,6 +4,7 @@ import { createBoard, getMyBoards, getBoard, updateBoard, deleteBoard } from '..
 import { protect } from '../middleware/auth.js';
 import { createList, updateList, deleteList } from '../controllers/listController.js';
 import { createCard, updateCard, deleteCard } from '../controllers/cardController.js';
+import { createTaskDraft } from '../controllers/taskDraftController.js';
 import { getMembers, addMember, updateMemberRole, removeMember } from '../controllers/memberController.js';
 import { getActivities } from '../controllers/activityController.js';
 import { getCardComments, createCardComment } from '../controllers/commentController.js';
@@ -68,6 +69,7 @@ router.delete('/:boardId/lists/:listId', deleteList);
 
 // Cards (nested under a board)
 router.post('/:boardId/cards', createCard);
+router.post('/:boardId/cards/:cardId/draft', createTaskDraft);
 router.patch('/:boardId/cards/:cardId', updateCard);
 router.delete('/:boardId/cards/:cardId', deleteCard);
 router.get('/:boardId/cards/:cardId/comments', getCardComments);

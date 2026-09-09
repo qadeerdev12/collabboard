@@ -3,6 +3,7 @@ import { boardApi } from '../lib/api'
 import { CARD_STATUSES, CARD_TAGS, statusDotStyle, tagStyle } from '../lib/cardMeta'
 import ConfirmDialog from './ConfirmDialog'
 import CardChecklist from './CardChecklist'
+import TaskDraftPanel from './TaskDraftPanel'
 
 function memberUserId(member) {
   return member.user?.id || member.user?._id || member.user
@@ -89,6 +90,7 @@ export default function CardDetailModal({
   const [listId, setListId] = useState(card.list)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [aiApplying, setAiApplying] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [comments, setComments] = useState([])
@@ -147,7 +149,7 @@ export default function CardDetailModal({
   async function handleSubmit(e) {
     e.preventDefault()
     const nextTitle = title.trim()
-    if (!nextTitle || saving || deleting) return
+    if (!nextTitle || saving || deleting || aiApplying) return
 
     setSaving(true)
     setError('')
@@ -170,12 +172,12 @@ export default function CardDetailModal({
   }
 
   async function handleDelete() {
-    if (saving || deleting) return
+    if (saving || deleting || aiApplying) return
     setDeleteConfirmOpen(true)
   }
 
   async function confirmDelete() {
-    if (saving || deleting) return
+    if (saving || deleting || aiApplying) return
     setDeleting(true)
     setError('')
     try {
@@ -368,7 +370,11 @@ export default function CardDetailModal({
             />
           </label>
 
-          <CardChecklist card={card} onSave={onSave} disabled={saving || deleting} />
+          <TaskDraftPanel key={`${card._id}:${token}`} boardId={boardId} card={card} token={token} title={title}
+            disabled={saving || deleting} onSave={onSave} onApplying={setAiApplying}
+            onUse={(draft) => { setDescription(draft.description); setTag(draft.tag) }} />
+
+          <CardChecklist card={card} onSave={onSave} disabled={saving || deleting || aiApplying} />
 
           <section className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex items-center justify-between gap-3">
@@ -446,7 +452,7 @@ export default function CardDetailModal({
           <button
             type="button"
             onClick={handleDelete}
-            disabled={saving || deleting}
+            disabled={saving || deleting || aiApplying}
             className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -467,7 +473,7 @@ export default function CardDetailModal({
             </button>
             <button
               type="submit"
-              disabled={!title.trim() || saving || deleting}
+              disabled={!title.trim() || saving || deleting || aiApplying}
               className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-teal-600/20 transition hover:bg-teal-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? 'Saving...' : 'Save changes'}

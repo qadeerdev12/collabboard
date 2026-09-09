@@ -128,6 +128,8 @@ export const taskApi = {
 }
 
 export const boardApi = {
+  draftCard: (boardId, cardId, input, token) =>
+    request(`/boards/${boardId}/cards/${cardId}/draft`, { method: 'POST', body: input, token }),
   listTemplates: (token) =>
     request('/workflow-templates', { token }),
 

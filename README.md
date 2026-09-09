@@ -431,6 +431,7 @@ server/src/
 | [Realtime architecture](docs/06-realtime-architecture.md) | Socket implementation notes and maintenance guide |
 | [Board page maintenance](docs/board-page-maintenance.md) | Component ownership, drag invariants, regression checks, and future extraction boundaries |
 | [Workspace activity](docs/workspace-activity.md) | Membership-scoped feed, cursor pagination, query behavior, and regression checks |
+| [AI task drafting](docs/ai-task-drafting.md) | OpenAI setup, editable previews, privacy boundaries, and testing |
 
 ---
 
