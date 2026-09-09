@@ -10,7 +10,7 @@ import Activity from '../models/Activity.js';
 import Notification from '../models/Notification.js';
 import { getBoardIfMember, getBoardIfRole } from '../utils/boardAccess.js';
 import { recordActivity } from '../services/activityService.js';
-import { backfillBoardWorkItemsToDefaultWorkflow, ensureDefaultWorkflow } from '../services/workflowService.js';
+import { backfillBoardWorkItemsToDefaultWorkflow, DEFAULT_WORKFLOW, ensureDefaultWorkflow } from '../services/workflowService.js';
 
 // Keep in sync with the Board schema's color enum.
 const BOARD_COLORS = ['slate', 'indigo', 'emerald', 'amber', 'rose', 'sky', 'violet'];
@@ -83,6 +83,15 @@ export async function getMyBoards(req, res) {
   }
 }
 
+async function readBoardStructure(boardId) {
+  const [workflows, lists, cards] = await Promise.all([
+    Workflow.find({ board: boardId }).sort({ position: 1, createdAt: 1 }),
+    List.find({ board: boardId }).sort({ position: 1 }),
+    Card.find({ board: boardId }).sort({ position: 1 }).populate('assignee', 'name email'),
+  ]);
+  return { workflows, lists, cards };
+}
+
 // GET /api/v1/boards/:boardId  (protected)
 export async function getBoard(req, res) {
   try {
@@ -91,19 +100,22 @@ export async function getBoard(req, res) {
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Board not found.' } });
     }
 
-    // Older boards are backfilled lazily so every project has a stable workflow
-    // target and legacy work items are attached before the client reads them.
-    await backfillBoardWorkItemsToDefaultWorkflow(board._id);
-
-    // Fetch this board's project structure and work items, ordered by position.
-    const workflows = await Workflow.find({ board: board._id }).sort({ position: 1, createdAt: 1 });
-    const lists = await List.find({ board: board._id }).sort({ position: 1 });
-    const cards = await Card.find({ board: board._id })
-      .sort({ position: 1 })
-      .populate('assignee', 'name email');
-
-    await board.populate('members.user', 'name email');
-    return res.status(200).json({ data: { board, workflows, lists, cards } });
+    // Access is checked first; these independent reads can then run together.
+    let [structure] = await Promise.all([
+      readBoardStructure(board._id),
+      board.populate('members.user', 'name email'),
+    ]);
+    // Inspect already-fetched data rather than issuing migration writes on every
+    // GET. Null also covers hydrated legacy documents with a missing field.
+    const needsBackfill = !structure.workflows.some((workflow) => workflow.templateKey === DEFAULT_WORKFLOW.templateKey)
+      || structure.lists.some((list) => list.workflow == null)
+      || structure.cards.some((card) => card.workflow == null);
+    if (needsBackfill) {
+      await backfillBoardWorkItemsToDefaultWorkflow(board._id);
+      // Return persisted repair results, not the pre-migration snapshot.
+      structure = await readBoardStructure(board._id);
+    }
+    return res.status(200).json({ data: { board, ...structure } });
   } catch (err) {
     console.error('Get board error:', err.message);
     return res.status(500).json({ error: { code: 'SERVER', message: 'Something went wrong.' } });

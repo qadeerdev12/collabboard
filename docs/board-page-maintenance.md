@@ -153,3 +153,24 @@ live state. Future reviewable slices could extract:
 Avoid replacing `BoardPage` with one equally large catch-all hook. Keep each
 module responsible for a recognizable feature, and add tests before changing
 effect dependencies, state ownership, or persistence behavior.
+## Project-load read path
+
+`GET /boards/:boardId` checks membership before loading project structure. Workflow,
+list, card, and member-population reads then run concurrently. Existing sort orders
+and populated member/assignee fields are preserved.
+
+The controller inspects the fetched structure: repair is needed only when no
+`templateKey: default` workflow exists or a list/card has a null or missing workflow.
+Healthy projects perform no migration writes and need no additional migration-check
+queries. No persisted migration flag is used, so later legacy imports are still
+detected. Legacy projects run the existing scoped backfill and re-read structure
+before responding; already-scoped work is never reassigned.
+
+This is not a transaction or a general integrity repair. Concurrent mutations may
+change data between reads, and dangling non-null workflow IDs are not repaired.
+Backfill failure returns the existing generic 500; the next load retries remaining
+legacy work. The existing default-workflow upsert/concurrency behavior is unchanged.
+
+`server/src/__tests__/boardLoading.test.js` covers read-only repeat loads, legacy
+null/missing fields, partial migration, missing defaults, project isolation, access
+denial, retry after repair failure, and concurrent structure reads.
