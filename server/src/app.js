@@ -7,6 +7,7 @@ import workflowTemplateRoutes from './routes/workflowTemplateRoutes.js';
 import githubIntegrationRoutes from './routes/githubIntegrationRoutes.js';
 import taskRoutes from './routes/taskRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
+import activityRoutes from './routes/activityRoutes.js';
 
 export function allowedClientOrigins() {
   return (process.env.CLIENT_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173')
@@ -34,6 +35,7 @@ export function createApp({ io } = {}) {
   app.use('/api/v1/boards', boardRoutes);
   app.use('/api/v1/tasks', taskRoutes);
   app.use('/api/v1/notifications', notificationRoutes);
+  app.use('/api/v1/activities', activityRoutes);
 
   app.get('/', (req, res) => {
     res.json({

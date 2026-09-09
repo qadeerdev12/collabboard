@@ -115,6 +115,14 @@ export const notificationApi = {
   },
 }
 
+export const activityApi = {
+  list: (token, { cursor, limit = 50 } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    return request(`/activities?${params}`, { token });
+  },
+}
+
 export const taskApi = {
   mine: (token) => request('/tasks/mine', { token }),
 }

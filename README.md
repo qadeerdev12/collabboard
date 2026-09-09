@@ -382,6 +382,17 @@ reads concurrent but apply each result and loading state separately: optional
 GitHub data must never delay project access. The effect cleanup ignores stale
 responses; it does not cancel requests already sent to the server.
 
+Pages are loaded on demand through module-scope `React.lazy` imports in
+`client/src/App.jsx`. Keep new page imports lazy to preserve route-level splitting.
+`ProtectedRoute` checks authentication before rendering a protected page;
+authentication and page downloads share `PageLoading`. `PageErrorBoundary` offers
+a manual reload for failed imports or page rendering errors, with no automatic
+retry loop. A reload discards unsaved in-memory changes. Deployments must serve
+the SPA entry point for deep links and keep hashed assets available during rollouts.
+Route tests cover authentication gates, pending/failed imports, existing paths,
+and query/hash preservation. Vite's build output reports entry and on-demand chunk
+sizes separately; entry size alone is not the total download for a visited page.
+
 ---
 
 ## Project structure
@@ -419,6 +430,7 @@ server/src/
 | [Sprint plan](docs/05-sprint-plan.md) | Process, backlog, milestones, definition of done |
 | [Realtime architecture](docs/06-realtime-architecture.md) | Socket implementation notes and maintenance guide |
 | [Board page maintenance](docs/board-page-maintenance.md) | Component ownership, drag invariants, regression checks, and future extraction boundaries |
+| [Workspace activity](docs/workspace-activity.md) | Membership-scoped feed, cursor pagination, query behavior, and regression checks |
 
 ---
 

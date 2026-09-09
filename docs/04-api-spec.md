@@ -132,6 +132,24 @@ commit SHA so refreshes do not flood the project timeline.
 Repository stats currently include `openPullRequests` and `openIssues`, also
 using the linked repository token.
 
+### Workspace activity
+
+`GET /api/v1/activities?limit=50&cursor=...` requires authentication and returns
+`{ data: { activities: [...], nextCursor: string | null } }` with `Cache-Control: no-store`.
+Each activity retains its existing fields and populated actor (`name`, `email`),
+plus `boardName`. A missing actor is `null`. Projects are selected only from the
+authenticated user's current memberships, including owner/admin/member roles;
+client-supplied user or board IDs cannot widen access. Deleted projects are excluded.
+
+`limit` defaults to 50 and must be an integer from 1 to 50. Invalid limits or
+malformed cursors return `400 VALIDATION`. Results sort by `createdAt DESC, _id DESC`.
+Pass the returned opaque cursor unchanged to load older entries; `null` means the
+end. Newer arrivals are picked up on a fresh first-page request, not inserted into
+an older-page traversal. Membership is rechecked per request, but the membership
+read and activity read are not a transaction or a historical snapshot.
+
+The existing `GET /boards/:boardId/activities` contract remains unchanged.
+
 ### 2.4 Boards
 
 | Method | Path | Min role | Body | Returns |

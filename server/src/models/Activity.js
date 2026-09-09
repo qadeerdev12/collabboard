@@ -59,7 +59,7 @@ const activitySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-activitySchema.index({ board: 1, createdAt: -1 });
+activitySchema.index({ board: 1, createdAt: -1, _id: -1 });
 
 const Activity = mongoose.model('Activity', activitySchema);
 export default Activity;

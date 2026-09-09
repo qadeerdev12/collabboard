@@ -1,20 +1,31 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import AppHeader from '../components/AppHeader'
 import ActivityList from '../components/ActivityList'
 import { useAuth } from '../context/useAuth'
-import { boardApi } from '../lib/api'
+import { activityApi, boardApi } from '../lib/api'
+import { useLatestRequest } from '../hooks/useLatestRequest'
 
 export default function ActivityPage() {
   const { boardId } = useParams()
-  const navigate = useNavigate()
   const { token } = useAuth()
+  return <ActivitySession key={`${boardId || 'all'}:${token}`} boardId={boardId} token={token} />
+}
+
+function ActivitySession({ boardId, token }) {
+  const navigate = useNavigate()
+  const beginRead = useLatestRequest()
+  const morePending = useRef(false)
   const [board, setBoard] = useState(null)
   const [activities, setActivities] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [nextCursor, setNextCursor] = useState(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [moreError, setMoreError] = useState('')
 
   const loadActivity = useCallback(async () => {
+    const isCurrent = beginRead('activity')
     try {
       setLoading(true)
       setError('')
@@ -24,30 +35,46 @@ export default function ActivityPage() {
           boardApi.getOne(boardId, token),
           boardApi.getActivities(boardId, token),
         ])
+        if (!isCurrent()) return
         setBoard(boardRes.data.board)
         setActivities(activityRes.data.activities || [])
         return
       }
 
-      const boardsRes = await boardApi.list(token)
-      const boards = boardsRes.data.boards || []
-      const activityResponses = await Promise.all(
-        boards.map((item) => boardApi.getActivities(item._id, token))
-      )
-      const allActivities = activityResponses.flatMap((res, index) => (
-        (res.data.activities || []).map((activity) => ({
-          ...activity,
-          boardName: boards[index].name,
-        }))
-      ))
-      allActivities.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      setActivities(allActivities.slice(0, 50))
+      const res = await activityApi.list(token)
+      if (!isCurrent()) return
+      setActivities(res.data.activities)
+      setNextCursor(res.data.nextCursor)
     } catch (err) {
-      setError(err.message)
+      if (isCurrent()) setError(err.message)
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
-  }, [boardId, token])
+  }, [boardId, token, beginRead])
+
+  async function loadMore() {
+    if (!nextCursor || morePending.current) return
+    morePending.current = true
+    const isCurrent = beginRead('activity')
+    setLoadingMore(true)
+    setMoreError('')
+    try {
+      const res = await activityApi.list(token, { cursor: nextCursor })
+      if (!isCurrent()) return
+      setActivities((previous) => {
+        const ids = new Set(previous.map((activity) => activity._id))
+        return [...previous, ...res.data.activities.filter((activity) => !ids.has(activity._id))]
+      })
+      setNextCursor(res.data.nextCursor)
+    } catch (err) {
+      if (isCurrent()) setMoreError(err.message)
+    } finally {
+      if (isCurrent()) {
+        morePending.current = false
+        setLoadingMore(false)
+      }
+    }
+  }
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -102,6 +129,14 @@ export default function ActivityPage() {
             emptyTitle={boardId ? 'This project has no activity yet.' : 'No activity yet.'}
             emptyDescription="Create cards, move work, or invite collaborators to start the timeline."
           />
+          {!boardId && !loading && nextCursor && (
+            <div className="mt-4 flex flex-col items-center gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+              {moreError && <p role="alert" className="text-sm text-red-600 dark:text-red-300">{moreError}</p>}
+              <button type="button" onClick={loadMore} disabled={loadingMore} className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-semibold text-teal-700 disabled:opacity-50 dark:border-zinc-700 dark:text-teal-300">
+                {loadingMore ? 'Loading...' : moreError ? 'Retry loading more' : 'Load more'}
+              </button>
+            </div>
+          )}
         </section>
       </main>
     </div>
