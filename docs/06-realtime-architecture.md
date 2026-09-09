@@ -154,9 +154,35 @@ The client helper `emitWithAck` rejects the Promise when:
 Socket mutation broadcasts use `socket.to(roomName(board._id)).emit(...)`, so the sender is excluded. The sender updates its own UI from the ack response.
 
 REST-triggered broadcasts use the app-level Socket.IO server because there is
-no originating socket to exclude. The client merges `workflow:created` and
-`members:updated` payloads by id, so the requester and collaborators can all
-receive the same canonical state without duplicate rows.
+no originating socket to exclude. This includes the author's other connected
+tabs and an author who reconnects while their HTTP save is pending.
+
+Card/list REST controllers use the shared mutation services, record activity,
+then emit the matching saved entity or deleted ID to `board:<boardId>`:
+
+| REST operation | Event |
+| --- | --- |
+| Create card/list | `card:created` / `list:created` |
+| Edit card (including checklist) / rename list | `card:updated` / `list:updated` |
+| Move card / position-only list update | `card:moved` / `list:moved` |
+| Delete card/list | `card:deleted` / `list:deleted` |
+
+Checklist edits use the same single broadcast as other card edits, not an extra
+special-case event. Failed authorization, validation, or mutation persistence
+does not broadcast. Socket-origin writes retain sender exclusion and are not
+broadcast again by the shared services. REST still works without an attached
+Socket.IO server, for example in standalone API tests.
+
+The page applies both create responses and socket create events through
+`client/src/lib/boardState.js`. Existing IDs are retained, including a card that
+has already moved or a list that was renamed. A repeated list creation must not
+clear cards already received for that list. Workflow and member merges retain
+their existing ID-based behavior.
+
+`server/src/__tests__/restBroadcasts.test.js` uses isolated MongoDB and real socket
+clients to verify delivery, saved payloads, room isolation, rejection paths, and
+unchanged socket sender exclusion. Client state and page tests exercise both
+HTTP-first and socket-first create delivery during reconnection.
 
 Card/list creation payloads share the REST validation path. `workflowId` is
 optional; when omitted, lists use the board's first workflow and cards inherit

@@ -32,6 +32,11 @@ export async function createCard(req, res) {
             targetId: card._id,
             targetTitle: card.title,
         });
+        // REST has no sender socket to exclude. Notify every viewer, including
+        // the author's other tabs; clients merge create responses by ID.
+        req.app.get('io')?.to(`board:${board._id}`).emit('card:created', {
+            boardId: board._id.toString(), card,
+        });
         return res.status(201).json({ data: { card, activity } });
     } catch (err) {
         console.error('Create card error:', err.message);
@@ -54,12 +59,6 @@ export async function updateCard(req, res) {
             cardId: req.params.cardId,
             updates: req.body,
         });
-        // REST fallback must also refresh connected collaborators' checklists.
-        if (req.body.checklistOperation) {
-            req.app.get('io')?.to(`board:${board._id}`).emit('card:updated', {
-                boardId: board._id.toString(), card,
-            });
-        }
         const activity = await recordActivity({
             io: req.app.get('io'),
             boardId: board._id,
@@ -68,6 +67,10 @@ export async function updateCard(req, res) {
             targetType: 'card',
             targetId: card._id,
             targetTitle: card.title,
+        });
+        // Checklist and ordinary edits share this one post-save broadcast.
+        req.app.get('io')?.to(`board:${board._id}`).emit(action === 'card.moved' ? 'card:moved' : 'card:updated', {
+            boardId: board._id.toString(), card,
         });
         return res.status(200).json({ data: { card, activity } });
     } catch (err) {
@@ -94,6 +97,9 @@ export async function deleteCard(req, res) {
             targetType: 'card',
             targetId: req.params.cardId,
             targetTitle: cardToDelete?.title || '',
+        });
+        req.app.get('io')?.to(`board:${board._id}`).emit('card:deleted', {
+            boardId: board._id.toString(), cardId: req.params.cardId,
         });
         return res.status(200).json({ data: { deleted: true, activity } });
     } catch (err) {

@@ -11,6 +11,7 @@ import { useLatestRequest } from '../hooks/useLatestRequest'
 import { positionBetween } from '../lib/position'
 import { memberUserId } from '../lib/boardMembers'
 import { githubRetryAt } from '../lib/githubRetry'
+import { addCreatedCard, addCreatedList } from '../lib/boardState'
 import BoardColumn from '../components/BoardColumn'
 import CardDetailModal from '../components/CardDetailModal'
 import NewBoardModal from '../components/NewBoardModal'
@@ -535,10 +536,7 @@ function BoardSession({ boardId, user, token }) {
 
     function onCardCreated(payload) {
       if (payload.boardId !== boardId) return
-      setCardsByList((prev) => ({
-        ...prev,
-        [payload.card.list]: [...(prev[payload.card.list] || []), payload.card].sort((a, b) => a.position - b.position),
-      }))
+      setCardsByList((prev) => addCreatedCard(prev, payload.card))
     }
 
     function onCardChanged(payload) {
@@ -558,7 +556,7 @@ function BoardSession({ boardId, user, token }) {
 
     function onListCreated(payload) {
       if (payload.boardId !== boardId) return
-      setLists((prev) => [...prev, payload.list].sort((a, b) => a.position - b.position))
+      setLists((prev) => addCreatedList(prev, payload.list))
       setCardsByList((prev) => ({ ...prev, [payload.list._id]: prev[payload.list._id] || [] }))
     }
 
@@ -806,7 +804,7 @@ function BoardSession({ boardId, user, token }) {
         { boardId, title, listId, position, workflowId },
         async () => (await boardApi.createCard(boardId, title, listId, position, token, { workflowId })).data
       )
-      setCardsByList((prev) => ({ ...prev, [listId]: [...(prev[listId] || []), data.card] }))
+      setCardsByList((prev) => addCreatedCard(prev, data.card))
       prependActivity(data.activity)
       setDraftForList(listId, '')
       toast.success('Card created', title)
@@ -828,8 +826,8 @@ function BoardSession({ boardId, user, token }) {
         { boardId, title: newListTitle, position, workflowId },
         async () => (await boardApi.createList(boardId, newListTitle, position, token, { workflowId })).data
       )
-      setLists((prev) => [...prev, data.list].sort((a, b) => a.position - b.position))
-      setCardsByList((prev) => ({ ...prev, [data.list._id]: [] }))
+      setLists((prev) => addCreatedList(prev, data.list))
+      setCardsByList((prev) => ({ ...prev, [data.list._id]: prev[data.list._id] || [] }))
       prependActivity(data.activity)
       setNewListTitle('')
       toast.success('List created', data.list.title)

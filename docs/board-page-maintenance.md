@@ -21,6 +21,7 @@ behavior without changing that model, API payloads, permissions, or socket event
 | `hooks/useBoardDragAndDrop.js` | Drag sensors, collision priority, optimistic movement, persistence, and rollback |
 | `hooks/useLatestRequest.js` | Per-resource read tickets and invalidation on session cleanup |
 | `lib/boardMembers.js` | Normalize raw or populated membership user IDs |
+| `lib/boardState.js` | Idempotent card/list creation merges for REST responses and socket echoes |
 
 Existing `BoardColumn`, card detail, chat, members, activity, and confirmation
 components remain where they were. Do not move unrelated components into the
@@ -41,6 +42,11 @@ handlers. Backend authorization remains required regardless of hidden buttons.
 The page passes the actual route `boardId` to the header so activity links retain
 the same route behavior. Notification task deep links, query-driven panels, and
 workflow selection continue to be coordinated in the page.
+
+REST create responses can overlap with socket broadcasts if the caller reconnects
+mid-save. Both paths must use `addCreatedCard` / `addCreatedList` so duplicate
+delivery cannot add a second row or replace newer state. List creation must also
+preserve an existing card bucket rather than resetting it to an empty array.
 
 ## Project request isolation
 

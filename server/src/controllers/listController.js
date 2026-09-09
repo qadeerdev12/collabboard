@@ -32,6 +32,10 @@ export async function createList(req, res) {
       targetId: list._id,
       targetTitle: list.title,
     });
+    // Use the same room/payload as socket mutations after persistence succeeds.
+    req.app.get('io')?.to(`board:${board._id}`).emit('list:created', {
+      boardId: board._id.toString(), list,
+    });
     return res.status(201).json({ data: { list, activity } });
   } catch (err) {
     console.error('Create list error:', err.message);
@@ -47,6 +51,7 @@ export async function updateList(req, res) {
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Board not found.' } });
     }
 
+    const action = req.body.position !== undefined && req.body.title === undefined ? 'list.moved' : 'list.updated';
     const list = await updateListMutation({
       boardId: board._id,
       listId: req.params.listId,
@@ -56,10 +61,13 @@ export async function updateList(req, res) {
       io: req.app.get('io'),
       boardId: board._id,
       actorId: req.user._id,
-      action: req.body.position !== undefined && req.body.title === undefined ? 'list.moved' : 'list.updated',
+      action,
       targetType: 'list',
       targetId: list._id,
       targetTitle: list.title,
+    });
+    req.app.get('io')?.to(`board:${board._id}`).emit(action === 'list.moved' ? 'list:moved' : 'list:updated', {
+      boardId: board._id.toString(), list,
     });
     return res.status(200).json({ data: { list, activity } });
   } catch (err) {
@@ -86,6 +94,9 @@ export async function deleteList(req, res) {
       targetType: 'list',
       targetId: req.params.listId,
       targetTitle: listToDelete?.title || '',
+    });
+    req.app.get('io')?.to(`board:${board._id}`).emit('list:deleted', {
+      boardId: board._id.toString(), listId: req.params.listId,
     });
     return res.status(200).json({ data: { deleted: true, activity } });
   } catch (err) {

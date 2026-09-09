@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   boardApi: {
     getOne: vi.fn(), getActivities: vi.fn(), getMessages: vi.fn(), listTemplates: vi.fn(),
     getGitHubIntegration: vi.fn(), getGitHubCommits: vi.fn(), getGitHubStats: vi.fn(),
+    createCard: vi.fn(), createList: vi.fn(),
   },
   integrationApi: { getGitHubAccount: vi.fn(), listGitHubRepos: vi.fn() },
 }))
@@ -68,6 +69,47 @@ beforeEach(() => {
   mocks.boardApi.getGitHubStats.mockImplementation(async (id) => data({ stats: { project: id }, integration: integration(id) }))
   mocks.integrationApi.getGitHubAccount.mockResolvedValue(data({ account: { username: 'alex' } }))
   mocks.integrationApi.listGitHubRepos.mockResolvedValue(data({ repositories: [] }))
+})
+
+describe('REST create response and socket echo', () => {
+  it.each(['card', 'list'].flatMap((kind) => ['socket-first', 'http-first'].map((order) => [kind, order])))('merges %s creation once (%s)', async (kind, order) => {
+    const pending = deferred()
+    const list = { _id: 'alpha-list', workflow: 'alpha-workflow', title: 'Backlog', position: 1000 }
+    const createdList = { ...list, _id: 'new-list', title: 'Review', position: 2000 }
+    const card = { _id: 'new-card', list: kind === 'list' ? createdList._id : list._id, workflow: list.workflow, title: 'New task', position: 1000 }
+    mocks.boardApi.getOne.mockImplementation(async () => ({ data: { ...snapshot('alpha').data, lists: [list] } }))
+    mocks.boardApi[kind === 'card' ? 'createCard' : 'createList'].mockReturnValue(pending.promise)
+    const handlers = new Map()
+    mocks.socket.onSocketEvent.mockImplementation((event, handler) => {
+      handlers.set(event, handler)
+      return () => handlers.delete(event)
+    })
+    const view = render(tree())
+    await settle()
+    if (kind === 'card') {
+      fireEvent.change(screen.getByPlaceholderText('Add a task'), { target: { value: card.title } })
+      fireEvent.submit(screen.getByPlaceholderText('Add a task').closest('form'))
+    } else {
+      fireEvent.change(screen.getByLabelText('Add list to active workflow'), { target: { value: createdList.title } })
+      fireEvent.click(screen.getByRole('button', { name: 'Add list', exact: true }))
+    }
+    expect(mocks.boardApi[kind === 'card' ? 'createCard' : 'createList']).toHaveBeenCalledOnce()
+    // Reconnect while the HTTP response is pending, then deliver both paths.
+    mocks.socket.connected = true
+    view.rerender(tree())
+    await settle()
+    const value = kind === 'card' ? card : createdList
+    const socketDelivery = async () => {
+      await act(async () => handlers.get(`${kind}:created`)({ boardId: 'alpha', [kind]: value }))
+      if (kind === 'list') await act(async () => handlers.get('card:created')({ boardId: 'alpha', card }))
+    }
+    if (order === 'socket-first') await socketDelivery()
+    await act(async () => pending.resolve(data({ [kind]: value })))
+    if (order === 'http-first') await socketDelivery()
+    await settle()
+    expect(screen.getAllByRole('button', { name: /New task/ })).toHaveLength(1)
+    if (kind === 'list') expect(screen.getAllByRole('button', { name: 'Review', exact: true })).toHaveLength(1)
+  })
 })
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
